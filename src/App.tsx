@@ -8,9 +8,6 @@ import type {
   ExamTerm,
   Language
 } from './types/exam';
-import { SAMPLE_PAPERS } from './data/samplePapers';
-import { PRESET_CHAPTER_COLLECTIONS } from './data/presetChapters';
-import { OCR_PRESETS } from './data/ocrPresets';
 import { Header } from './components/Header';
 import { ChapterImageUploader } from './components/generator/ChapterImageUploader';
 import { GenerationConfigPanel } from './components/generator/GenerationConfigPanel';
@@ -26,14 +23,57 @@ import { exportPaperToPdf, printPaperNative } from './utils/pdfExporter';
 import { parseRawOcrTextToExamPaper } from './utils/ocrParser';
 import { generateExamPaperFromBlueprint } from './utils/aiGenerator';
 
+// ---------------------------------------------------------------------------
+// Blank paper template — used as the true "no data" starting state.
+// Subject, grade, sections etc. are all empty/default and must be replaced
+// by real user actions (OCR, AI Generator, or Sample Paper load).
+// ---------------------------------------------------------------------------
+const BLANK_PAPER: ExamPaper = {
+  id: 'blank-paper-initial',
+  academyName: 'The Achievers Islamic Academy',
+  campusName: 'Main Academic Campus',
+  examTerm: 'Mid-Term Examination 2026',
+  gradeLevel: 'Grade 9 (Matric / O-Level)',
+  subject: 'Islamic Studies (اسلامیات)',
+  language: 'ur',
+  timeAllowed: '2 Hours',
+  totalMarks: 50,
+  date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+  instructions: [
+    'Write your Name and Roll Number clearly on the answer sheet.',
+    'Attempt all questions. No question will be repeated.',
+    'Use blue or black pen for answers.',
+  ],
+  showBismillah: true,
+  showWatermark: true,
+  showStudentTable: true,
+  boardFormat: 'bise',
+  paperCode: '0000',
+  examGroup: 'Group-I (Morning)',
+  showBubbleSheet: false,
+  layoutColumns: 1,
+  fontSize: 'standard',
+  paperSize: 'a4',
+  sections: [],
+  createdVia: 'manual',
+  createdAt: new Date().toISOString(),
+};
+
 export function App() {
   const [activeTab, setActiveTab] = useState<'generator' | 'ocr' | 'pre_primary' | 'studio' | 'samples'>('pre_primary');
-  const [currentPaper, setCurrentPaper] = useState<ExamPaper>(SAMPLE_PAPERS[0]);
 
-  // Mode 2: AI Auto-Generation State
-  const [chapterPages, setChapterPages] = useState<UploadedChapterPage[]>(
-    PRESET_CHAPTER_COLLECTIONS[0].pages
-  );
+  // =========================================================
+  // SHARED PAPER STATE — single source of truth for Studio,
+  // Export, Print, and Header display. Never seeded with
+  // hardcoded preset data.
+  // =========================================================
+  const [currentPaper, setCurrentPaper] = useState<ExamPaper>(BLANK_PAPER);
+
+  // =========================================================
+  // MODE 2: AI Auto-Generation State
+  // chapterPages starts EMPTY — teacher must upload images.
+  // =========================================================
+  const [chapterPages, setChapterPages] = useState<UploadedChapterPage[]>([]);
   const [blueprint, setBlueprint] = useState<BlueprintConfig>({
     grade: 'Grade 9 (Matric / O-Level)',
     subject: 'Islamic Studies (اسلامیات)',
@@ -62,25 +102,21 @@ export function App() {
   });
   const [isClarificationOpen, setIsClarificationOpen] = useState<boolean>(false);
 
-  // Mode 1: OCR State
+  // =========================================================
+  // MODE 1: OCR State
+  // Starts with ocrCompleted = false and no pre-loaded paper.
+  // Only populated after a teacher actually runs the OCR scan.
+  // =========================================================
   const [isOcrProcessing, setIsOcrProcessing] = useState<boolean>(false);
-  const [ocrCompleted, setOcrCompleted] = useState<boolean>(true);
-  const [ocrRawText, setOcrRawText] = useState<string>(() => OCR_PRESETS[0].extractedRawText);
-  const [ocrParsedPaper, setOcrParsedPaper] = useState<ExamPaper>(() => {
-    return parseRawOcrTextToExamPaper(OCR_PRESETS[0].extractedRawText, {
-      customSubject: OCR_PRESETS[0].subject,
-      customGrade: OCR_PRESETS[0].gradeLevel,
-      customLanguage: OCR_PRESETS[0].language,
-      customExamTerm: OCR_PRESETS[0].examTerm,
-      customTotalMarks: OCR_PRESETS[0].totalMarks,
-      customTime: OCR_PRESETS[0].timeAllowed,
-    });
-  });
+  const [ocrCompleted, setOcrCompleted] = useState<boolean>(false);
+  const [ocrRawText, setOcrRawText] = useState<string>('');
+  const [ocrParsedPaper, setOcrParsedPaper] = useState<ExamPaper | null>(null);
 
   // Action: Synchronously update OCR Paper and globally bind currentPaper
   const handleUpdateOcrPaper: React.Dispatch<React.SetStateAction<ExamPaper>> = (paperAction) => {
     setOcrParsedPaper((prev) => {
-      const next = typeof paperAction === 'function' ? (paperAction as (p: ExamPaper) => ExamPaper)(prev) : paperAction;
+      const base = prev ?? BLANK_PAPER;
+      const next = typeof paperAction === 'function' ? (paperAction as (p: ExamPaper) => ExamPaper)(base) : paperAction;
       return next;
     });
     setCurrentPaper((prev) => {
@@ -89,8 +125,17 @@ export function App() {
     });
   };
 
-  // Action: Handle instant preset selection in OCR tab
-  const handlePresetSelect = (preset: (typeof OCR_PRESETS)[0]) => {
+  // Action: Handle instant preset selection in OCR tab — preset sends
+  // its pre-extracted text directly so we bypass the fallback generator.
+  const handlePresetSelect = (preset: { 
+    extractedRawText: string;
+    subject: Subject;
+    gradeLevel: GradeLevel;
+    language: Language;
+    examTerm: ExamTerm;
+    totalMarks: number;
+    timeAllowed: string;
+  }) => {
     const parsed = parseRawOcrTextToExamPaper(preset.extractedRawText, {
       customSubject: preset.subject,
       customGrade: preset.gradeLevel,
@@ -128,7 +173,6 @@ export function App() {
     const activeDoc = (activeTab === 'ocr' && ocrParsedPaper) ? ocrParsedPaper : currentPaper;
     const cleanSub = activeDoc.subject.replace(/[^a-zA-Z0-9]/g, '_');
     const cleanGrade = activeDoc.gradeLevel.replace(/[^a-zA-Z0-9]/g, '_');
-    // Pre-primary worksheets are always A4; other tabs read from document
     const paperSize: 'a4' | 'legal' = (activeTab === 'pre_primary') ? 'a4' : (activeDoc.paperSize || 'a4');
     await exportPaperToPdf(
       'achievers-printable-paper',
@@ -139,7 +183,6 @@ export function App() {
 
   // Action: Native Print
   const handlePrint = () => {
-    // Pre-primary worksheets always enforce A4; other tabs read from active document
     if (activeTab === 'pre_primary') {
       printPaperNative('a4');
     } else {
@@ -153,9 +196,24 @@ export function App() {
     setPreviewImage({ isOpen: true, url, title });
   };
 
+  // ---------------------------------------------------------------------------
   // Action: Start OCR Digitize
+  //
+  // KEY FIX — Eliminates the old hardcoded Islamic Studies / Math / English /
+  // Urdu fallback blocks entirely.
+  //
+  // For PRESET uploads: rawPresetText is provided by OcrUploader, so we
+  // parse it directly with the preset's metadata.
+  //
+  // For REAL file uploads: rawPresetText is undefined. We can't perform
+  // actual in-browser OCR without a cloud API, so we:
+  //   1. Build a structured raw-text template from the teacher's metadata.
+  //   2. Seed ocrRawText with it so the teacher can paste/correct the real
+  //      content in the OcrExtractedEditor before applying it to Studio.
+  // This is the honest, correct behaviour for a browser-based system.
+  // ---------------------------------------------------------------------------
   const handleStartOcr = (
-    imageDataUrl: string, 
+    imageDataUrl: string,
     rawPresetText?: string,
     presetMetadata?: {
       subject?: Subject;
@@ -170,107 +228,80 @@ export function App() {
     setOcrCompleted(false);
 
     setTimeout(() => {
-      let extractedText = rawPresetText;
-      const targetSubject = presetMetadata?.subject || currentPaper.subject;
-      const targetGrade = presetMetadata?.gradeLevel || currentPaper.gradeLevel;
+      // Resolve the metadata the teacher configured
+      const resolvedSubject   = presetMetadata?.subject   ?? 'English Language & Lit';
+      const resolvedGrade     = presetMetadata?.gradeLevel ?? 'Grade 9 (Matric / O-Level)';
+      const resolvedLanguage  = presetMetadata?.language  ?? 'en';
+      const resolvedTerm      = presetMetadata?.examTerm  ?? 'Mid-Term Examination 2026';
+      const resolvedMarks     = presetMetadata?.totalMarks ?? 50;
+      const resolvedTime      = presetMetadata?.timeAllowed ?? '2 Hours';
 
-      if (!extractedText) {
-        if (targetSubject.includes('Urdu') || targetSubject.includes('اردو')) {
-          extractedText = `The Achievers Islamic Academy
-اردو لازمی - ${targetGrade}
-کل نمبر: 50   وقت: 2 گھنٹے
+      let extractedText: string;
 
-حصہ اول: معروضی سوالات (10 نمبر)
-1. "پتہ پتہ بوٹا بوٹا حال ہمارا جانے ہے" یہ کس شاعر کا کلام ہے؟
-(الف) میر تقی میر   (ب) مرزا اسد اللہ خان غالب   (ج) علامہ اقبال   (د) فیض احمد فیض
+      if (rawPresetText) {
+        // ── Preset path: use the pre-extracted text verbatim ──────────────────
+        extractedText = rawPresetText;
+      } else {
+        // ── Real upload path: build a structured template from user's metadata ─
+        // The teacher fills in / corrects the questions in OcrExtractedEditor.
+        const isUrdu = resolvedLanguage === 'ur';
+        const isArabic = resolvedLanguage === 'ar';
 
-2. لفظ "مسدس" کے لغوی معنی کیا ہیں؟
-خالی جگہ: چھ مصرعوں پر مشتمل نظم
-
-3. درج ذیل میں سے اسمِ معرفہ کی نشاندہی کریں:
-(الف) شہر   (ب) دریا   (ج) کراچی   (د) کتاب
-
-حصہ دوم: مختصر سوالات (کوئی سے 5 حل کریں)
-1. تشبیہ کے بنیادی ارکان تفصیل سے لکھیں۔
-2. محاورہ "آب آب ہونا" اور "چراغ پا ہونا" کا با محاورہ استعمال تحریر کریں۔
-3. سیرت النبی ﷺ سے متعلق سبق کا مرکزی خیال قلمبند کریں۔
-
-حصہ سوم: تفصیلی سوال (15 نمبر)
-1. وقت کی پابندی اور قومی ترقی کے عنوان پر جامع مضمون تحریر کریں۔`;
-        } else if (targetSubject.includes('Math') || targetSubject.includes('ریاضی')) {
-          extractedText = `The Achievers Islamic Academy
-Mathematics Examination - ${targetGrade}
-Total Marks: 50   Time: 2 Hours
-
-Section A: Objective & MCQs (10 Marks)
-1. The standard form of a quadratic equation is:
-(A) $ax^2 + bx + c = 0$   (B) $ax + b = 0$   (C) $ax^3 = 0$   (D) $x^2 = y$
-
-2. The solution set of $x^2 - 16 = 0$ is:
-(A) $\\{4\\}$   (B) $\\{-4\\}$   (C) $\\{\\pm 4\\}$   (D) $\\{16\\}$
-
-Section B: Short Questions (Attempt any 5)
-1. Solve $x^2 - 7x + 12 = 0$ by factorization.
-2. Find the discriminant of $3x^2 - 5x + 2 = 0$ and state nature of roots.
-3. If $\\alpha, \\beta$ are roots of $x^2 - 3x + 1 = 0$, evaluate $\\alpha^2 + \\beta^2$.
-
-Section C: Long Questions (Attempt any 2)
-1. State and prove Pythagoras Theorem with neat geometric diagram.
-2. Solve the following simultaneous equations: $x + y = 6$ and $2x - y = 3$.`;
-        } else if (targetSubject.includes('English')) {
-          extractedText = `The Achievers Islamic Academy
-English Language & Lit - ${targetGrade}
-Total Marks: 50   Time: 2 Hours
-
-Section A: Objective & Grammar (10 Marks)
-1. Identify the antonym of the word 'Benevolent':
-(A) Malevolent   (B) Generous   (C) Helpful   (D) Kind
-
-2. Fill in the blank with appropriate preposition: "She is proficient ________ spoken English."
-Answer: in
-
-Section B: Short Questions & Comprehension (25 Marks)
-1. Summarize the central theme of William Wordsworth's poem "Daffodils".
-2. Change into Passive Voice: "The academy awarded the brilliant students."
-3. Differentiate between a Transitive and Intransitive verb with examples.
-
-Section C: Composition (15 Marks)
-1. Write a descriptive essay on: "The Role of Education in Ethical Development".`;
-        } else {
-          // Dynamic Islamic Studies / Religious & Moral Education fallback
-          extractedText = `The Achievers Islamic Academy
-${targetSubject} - ${targetGrade}
-کل نمبر: 50   وقت: 2 گھنٹے
+        if (isUrdu || isArabic) {
+          extractedText =
+`The Achievers Islamic Academy
+${resolvedSubject} - ${resolvedGrade}
+کل نمبر: ${resolvedMarks}   وقت: ${resolvedTime}
 
 حصہ اول: معروضی سوالات
-1. ارکان اسلام کی کل تعداد ہے:
-(الف) چار   (ب) پانچ   (ج) چھ   (د) سات
+1. (اپنا پہلا سوال یہاں لکھیں)
+(الف) آپشن 1   (ب) آپشن 2   (ج) آپشن 3   (د) آپشن 4
 
-2. حدیث نبوی: "الصَّلَاةُ عِمَادُ الدِّينِ" کا معنی ہے: نماز دین کا ________ ہے۔
-خالی جگہ: ستون
+2. (خالی جگہ پُر کریں): ________
 
 حصہ دوم: مختصر سوالات (کوئی سے 5 حل کریں)
-1. سورۃ الانفال کی روشنی میں مومنین کے اوصاف بیان کریں۔
-2. زکوٰۃ کے مصارف اور فضیلت تحریر کریں۔
-3. سیرت النبی ﷺ سے امانت و دیانت کا ایک واقعہ لکھیں۔
+1. (یہاں اپنا مختصر سوال لکھیں)
+2. (یہاں اپنا دوسرا مختصر سوال لکھیں)
+3. (یہاں اپنا تیسرا مختصر سوال لکھیں)
 
 حصہ سوم: تفصیلی سوالات (کوئی سے 2 حل کریں)
-1. مواخات مدینہ کے پس منظر اور اخوتِ اسلامی پر جامع نوٹ تحریر کریں۔`;
+1. (یہاں اپنا تفصیلی سوال لکھیں)
+2. (یہاں اپنا دوسرا تفصیلی سوال لکھیں)`;
+        } else {
+          extractedText =
+`The Achievers Islamic Academy
+${resolvedSubject} - ${resolvedGrade}
+Total Marks: ${resolvedMarks}   Time: ${resolvedTime}
+
+Section A: Objective Questions
+1. (Write your first MCQ question here)
+(A) Option 1   (B) Option 2   (C) Option 3   (D) Option 4
+
+2. Fill in the blank: The answer to this question is ________.
+
+Section B: Short Questions (Attempt any 5)
+1. (Write your first short question here)
+2. (Write your second short question here)
+3. (Write your third short question here)
+
+Section C: Long Questions (Attempt any 2)
+1. (Write your first long question here)
+2. (Write your second long question here)`;
         }
       }
 
       const parsed = parseRawOcrTextToExamPaper(extractedText, {
-        customSubject: presetMetadata?.subject,
-        customGrade: presetMetadata?.gradeLevel,
-        customLanguage: presetMetadata?.language,
-        customExamTerm: presetMetadata?.examTerm,
-        customTotalMarks: presetMetadata?.totalMarks,
-        customTime: presetMetadata?.timeAllowed,
+        customSubject:   resolvedSubject,
+        customGrade:     resolvedGrade,
+        customLanguage:  resolvedLanguage,
+        customExamTerm:  resolvedTerm,
+        customTotalMarks: resolvedMarks,
+        customTime:      resolvedTime,
       });
 
       setOcrRawText(extractedText);
       setOcrParsedPaper(parsed);
-      setCurrentPaper(parsed); // Real-time global binding!
+      setCurrentPaper(parsed); // Real-time global binding
       setIsOcrProcessing(false);
       setOcrCompleted(true);
     }, 1200);
@@ -296,6 +327,9 @@ ${targetSubject} - ${targetGrade}
     setActiveTab('studio');
   };
 
+  // Derived: active paper for header display
+  const headerPaper = activeTab === 'ocr' && ocrParsedPaper ? ocrParsedPaper : currentPaper;
+
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-900 flex flex-col font-sans">
       {/* Top Header Bar */}
@@ -305,13 +339,13 @@ ${targetSubject} - ${targetGrade}
         onPrint={handlePrint}
         onExportDocx={handleExportDocx}
         onExportPdf={handleExportPdf}
-        hasActivePaper={!!currentPaper}
-        currentSubject={(activeTab === 'ocr' && ocrParsedPaper ? ocrParsedPaper.subject : currentPaper.subject)}
-        currentGrade={(activeTab === 'ocr' && ocrParsedPaper ? ocrParsedPaper.gradeLevel : currentPaper.gradeLevel)}
-        paperSize={(activeTab === 'ocr' && ocrParsedPaper ? ocrParsedPaper.paperSize : currentPaper.paperSize) || 'a4'}
+        hasActivePaper={!!currentPaper && currentPaper.sections.length > 0}
+        currentSubject={headerPaper.subject}
+        currentGrade={headerPaper.gradeLevel}
+        paperSize={headerPaper.paperSize || 'a4'}
         onPaperSizeChange={(size) => {
-          if (activeTab === 'ocr') {
-            setOcrParsedPaper((prev) => ({ ...prev, paperSize: size }));
+          if (activeTab === 'ocr' && ocrParsedPaper) {
+            setOcrParsedPaper((prev) => prev ? { ...prev, paperSize: size } : prev);
           }
           setCurrentPaper((prev) => ({ ...prev, paperSize: size }));
         }}
@@ -351,7 +385,7 @@ ${targetSubject} - ${targetGrade}
                   Intelligent Curriculum Exam Generator
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-200 mt-2 max-w-2xl leading-relaxed">
-                  Upload 4 to 10 textbook pages or chapter snapshots, specify question quantities, confirm weightage & rubric in the preliminary clarification step, and instantly generate a beautifully balanced academy examination paper.
+                  Optionally upload 4 to 10 textbook pages or chapter snapshots, specify question quantities, confirm weightage &amp; rubric in the preliminary clarification step, and instantly generate a beautifully balanced academy examination paper.
                 </p>
               </div>
 
@@ -360,12 +394,12 @@ ${targetSubject} - ${targetGrade}
                   onClick={() => setIsClarificationOpen(true)}
                   className="px-5 py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2"
                 >
-                  <span>Review Blueprint & Generate</span>
+                  <span>Review Blueprint &amp; Generate</span>
                 </button>
               </div>
             </div>
 
-            {/* Step 1: Chapter Image Uploader */}
+            {/* Step 1: Chapter Image Uploader (optional) */}
             <ChapterImageUploader
               pages={chapterPages}
               setPages={setChapterPages}
@@ -377,7 +411,7 @@ ${targetSubject} - ${targetGrade}
               blueprint={blueprint}
               setBlueprint={setBlueprint}
               onOpenClarification={() => setIsClarificationOpen(true)}
-              canGenerate={chapterPages.length > 0}
+              canGenerate={true}  // Always enabled — works from blueprint alone
             />
           </div>
         )}
@@ -412,6 +446,8 @@ ${targetSubject} - ${targetGrade}
                 onApplyToStudio={handleApplyOcrPaper}
                 onReset={() => {
                   setOcrCompleted(false);
+                  setOcrParsedPaper(null);
+                  setOcrRawText('');
                 }}
                 onPrint={handlePrint}
                 onExportDocx={handleExportDocx}
@@ -468,10 +504,10 @@ ${targetSubject} - ${targetGrade}
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <span className="font-bold text-[#0F284E]">THE ACHIEVERS ISLAMIC ACADEMY</span>
-            <span>• Assessment & Exam System</span>
+            <span>• Assessment &amp; Exam System</span>
           </div>
           <p className="text-slate-400">
-            Optimized for Agentic IDEs (Google Antigravity, v0, Bolt.new) • Built with React, TypeScript & KaTeX
+            Optimized for Agentic IDEs (Google Antigravity, v0, Bolt.new) • Built with React, TypeScript &amp; KaTeX
           </p>
         </div>
       </footer>

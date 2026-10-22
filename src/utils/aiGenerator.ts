@@ -1,5 +1,18 @@
 import type { BlueprintConfig, ExamPaper, ExamSection, Question, UploadedChapterPage } from '../types/exam';
 
+// ---------------------------------------------------------------------------
+// Helper: cycle through a pool array to always return exactly `count` items.
+// If pool.length < count, items wrap around so the blueprint is honoured.
+// ---------------------------------------------------------------------------
+function cyclePool<T>(pool: T[], count: number): T[] {
+  if (count <= 0 || pool.length === 0) return [];
+  const result: T[] = [];
+  for (let i = 0; i < count; i++) {
+    result.push(pool[i % pool.length]);
+  }
+  return result;
+}
+
 export const generateExamPaperFromBlueprint = (
   blueprint: BlueprintConfig,
   pages: UploadedChapterPage[] = []
@@ -265,7 +278,7 @@ function getSubjectSpecificMcqs(subject: string, grade: string, count: number, i
         blankAnswer: 'سب سے زیادہ متقی ہو',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   if (subject.includes('Math') || subject.includes('ریاضی')) {
@@ -321,7 +334,7 @@ function getSubjectSpecificMcqs(subject: string, grade: string, count: number, i
         blankAnswer: '$1$',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   if (subject.includes('Urdu') || subject.includes('اردو')) {
@@ -367,7 +380,7 @@ function getSubjectSpecificMcqs(subject: string, grade: string, count: number, i
         blankAnswer: 'علیحدہ',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   // Default English / Science
@@ -403,7 +416,7 @@ function getSubjectSpecificMcqs(subject: string, grade: string, count: number, i
       blankAnswer: '$9.8\\text{ m/s}^2$',
     },
   ];
-  return pool.slice(0, count);
+  return cyclePool(pool, count);
 }
 
 function getSubjectSpecificBlanks(subject: string, grade: string, count: number, isUrdu: boolean, isArabic: boolean): Partial<Question>[] {
@@ -425,7 +438,7 @@ function getSubjectSpecificBlanks(subject: string, grade: string, count: number,
         type: 'fill_in_the_blank' as const,
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   if (subject.includes('Math') || subject.includes('ریاضی')) {
@@ -446,7 +459,7 @@ function getSubjectSpecificBlanks(subject: string, grade: string, count: number,
         type: 'fill_in_the_blank' as const,
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   // Default Blanks
@@ -462,7 +475,7 @@ function getSubjectSpecificBlanks(subject: string, grade: string, count: number,
       type: 'fill_in_the_blank' as const,
     },
   ];
-  return pool.slice(0, count);
+  return cyclePool(pool, count);
 }
 
 function getSubjectSpecificVocab(subject: string, count: number, isUrdu: boolean, isArabic: boolean): Partial<Question> {
@@ -538,7 +551,7 @@ function getSubjectSpecificShortQuestions(
         sampleAnswer: 'بندوں کے باہمی حقوق، جیسے والدین، رشتہ داروں اور پڑوسیوں کے حقوق۔ اللہ تعالیٰ اپنے حقوق معاف فرما سکتا ہے مگر بندوں کے حقوق بندے ہی معاف کریں گے۔',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   if (subject.includes('Math') || subject.includes('ریاضی')) {
@@ -568,7 +581,7 @@ function getSubjectSpecificShortQuestions(
         sampleAnswer: 'Mean $\\bar{x} = 6$. Deviations: $-4, -2, 0, 2, 4$. Sum of squares $= 40$. $s = \\sqrt{40/5} = \\sqrt{8} \\approx 2.83$.',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   if (subject.includes('Urdu') || subject.includes('اردو')) {
@@ -590,7 +603,7 @@ function getSubjectSpecificShortQuestions(
         sampleAnswer: 'خودی کی بیداری، خود اعتمادی، جہدِ مسلسل اور امت مسلمہ کا باوقار احیاء۔',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   // Default Science / General
@@ -608,7 +621,7 @@ function getSubjectSpecificShortQuestions(
       sampleAnswer: 'Greenhouse gases like $CO_2$ trap heat radiated from Earth’s surface, raising planetary temperatures.',
     },
   ];
-  return pool.slice(0, count);
+  return cyclePool(pool, count);
 }
 
 function getSubjectSpecificLongQuestions(
@@ -634,7 +647,7 @@ function getSubjectSpecificLongQuestions(
         sampleAnswer: 'عزت و احترام، وراثت میں حق، تعلیم کا حق اور عائلی زندگی میں ذمہ داریاں۔',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   if (subject.includes('Math') || subject.includes('ریاضی')) {
@@ -652,7 +665,7 @@ function getSubjectSpecificLongQuestions(
         sampleAnswer: 'Express $\\tan \\theta = \\sin/\\cos$ and $\\cot \\theta = \\cos/\\sin$. Common denominators yield $\\frac{\\cos^2\\theta}{\\cos\\theta-\\sin\\theta} - \\frac{\\sin^2\\theta}{\\cos\\theta-\\sin\\theta} = \\frac{\\cos^2\\theta-\\sin^2\\theta}{\\cos\\theta-\\sin\\theta} = \\cos\\theta+\\sin\\theta$.',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   if (subject.includes('Urdu') || subject.includes('اردو')) {
@@ -666,7 +679,7 @@ function getSubjectSpecificLongQuestions(
         sampleAnswer: 'بخدمت جناب چیئرمین بلدیہ، عنوان، مؤدبانہ گزارش، محلے کے مسائل، صفائی کا فقدان اور فوری اقدامات کی استدعا۔',
       },
     ];
-    return pool.slice(0, count);
+    return cyclePool(pool, count);
   }
 
   // Default Long
@@ -680,5 +693,5 @@ function getSubjectSpecificLongQuestions(
       sampleAnswer: 'Phosphate-sugar backbone, nitrogenous base pairs (A-T, G-C), hydrogen bonds, and double helix antiparallel strands.',
     },
   ];
-  return pool.slice(0, count);
+  return cyclePool(pool, count);
 }
