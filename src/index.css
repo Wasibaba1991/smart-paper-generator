@@ -1,0 +1,389 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --primary-navy: #0f284e;
+    --primary-navy-dark: #0a1b35;
+    --emerald-accent: #059669;
+    --emerald-light: #ecfdf5;
+    --gold-accent: #d97706;
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #1e293b;
+    background-color: #f8fafc;
+  }
+}
+
+/* =====================================================================
+   Offline Embedded Typography: Jameel Noori Nastaleeq, Noto & Amiri
+   Zero External Dependencies for Flawless Academic Rendering
+   ===================================================================== */
+@font-face {
+  font-family: 'Jameel Noori Nastaleeq';
+  src: local('Jameel Noori Nastaleeq'),
+       local('Jameel Noori Nastaleeq Regular'),
+       url('/fonts/JameelNooriNastaleeq.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Noto Nastaliq Urdu';
+  src: local('Noto Nastaliq Urdu'),
+       url('/fonts/NotoNastaliqUrdu-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Amiri';
+  src: local('Amiri'),
+       local('Amiri-Regular'),
+       url('/fonts/Amiri-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Typography Helpers for Urdu & Arabic */
+.font-urdu {
+  font-family: 'Jameel Noori Nastaleeq', 'Noto Nastaliq Urdu', 'Urdu Typesetting', 'Alvi Nastaleeq', serif !important;
+  line-height: 2.2 !important;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-arabic {
+  font-family: 'Amiri', 'Noto Naskh Arabic', 'Traditional Arabic', serif !important;
+  line-height: 2.0 !important;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+.font-math {
+  font-family: 'KaTeX_Main', 'Cambria Math', 'Times New Roman', serif;
+}
+
+/* Pre-Primary / Nursery Rounded Friendly Typography */
+.font-kids {
+  font-family: 'Comic Sans MS', 'Chalkboard SE', 'Plus Jakarta Sans', system-ui, sans-serif;
+  letter-spacing: 0.04em;
+}
+
+/* Dotted Tracing Font Style for Handwriting Practice */
+.font-tracing {
+  font-family: 'Courier New', monospace, sans-serif;
+  letter-spacing: 0.25em;
+  font-weight: 400;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Watermark */
+.paper-watermark {
+  background-image: radial-gradient(circle at center, rgba(15, 40, 78, 0.03) 0%, transparent 70%);
+}
+
+/* =====================================================================
+   Pre-Primary Question Layouts & Handwriting Guidelines
+   ===================================================================== */
+
+/* 4-Line English Handwriting Tracing Guidelines */
+.handwriting-lines-4 {
+  position: relative;
+  height: 52px;
+  width: 100%;
+  background: 
+    linear-gradient(to bottom,
+      #f43f5e 0px, #f43f5e 1.5px,      /* Top line (Red) */
+      transparent 1.5px, transparent 17px,
+      #94a3b8 17px, #94a3b8 18.5px,    /* Mid line (Dashed effect/Slate) */
+      transparent 18.5px, transparent 34px,
+      #2563eb 34px, #2563eb 35.5px,    /* Base line (Blue) */
+      transparent 35.5px, transparent 50.5px,
+      #f43f5e 50.5px, #f43f5e 52px     /* Bottom line (Red) */
+    );
+  margin: 6px 0;
+  display: flex;
+  align-items: center;
+}
+
+/* 2-Line Urdu / Arabic Tracing Guidelines */
+.handwriting-lines-urdu {
+  position: relative;
+  height: 48px;
+  width: 100%;
+  border-top: 1.5px dashed #94a3b8;
+  border-bottom: 2px solid #0f284e;
+  margin: 6px 0;
+  display: flex;
+  align-items: center;
+}
+
+/* Dotted Guideline Box for Individual Character Tracing */
+.trace-char-box {
+  position: relative;
+  border: 1.5px dashed #94a3b8;
+  border-radius: 8px;
+  background-color: #ffffff;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+}
+
+/* Connector Dot for Line Matching Questions */
+.match-anchor-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  border: 2px solid #0f284e;
+  background-color: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+}
+
+.match-anchor-dot:hover {
+  background-color: #059669;
+  border-color: #059669;
+}
+
+.match-anchor-dot::after {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background-color: #0f284e;
+}
+
+/* =====================================================================
+   Strict A4 & Legal Academic Paper Sizing (Screen, Print & PDF Export)
+   ===================================================================== */
+
+/* 1. Base Paper Dimensions & Padding (Desktop & Screen Preview) */
+.paper-sheet-a4,
+.print-container[data-paper-size="a4"],
+#achievers-printable-paper[data-paper-size="a4"],
+#achievers-printable-paper:not([data-paper-size="legal"]),
+#achievers-printable-marking-scheme[data-paper-size="a4"] {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 20mm;
+  box-sizing: border-box;
+  margin-left: auto;
+  margin-right: auto;
+  background-color: #ffffff;
+}
+
+.paper-sheet-legal,
+.print-container[data-paper-size="legal"],
+#achievers-printable-paper[data-paper-size="legal"],
+#achievers-printable-marking-scheme[data-paper-size="legal"] {
+  width: 215.9mm;
+  min-height: 355.6mm;
+  padding: 20mm;
+  box-sizing: border-box;
+  margin-left: auto;
+  margin-right: auto;
+  background-color: #ffffff;
+}
+
+/* Fallback default print container sizing */
+.print-container {
+  width: 210mm;
+  min-height: 297mm;
+  padding: 20mm;
+  box-sizing: border-box;
+  margin-left: auto;
+  margin-right: auto;
+  background-color: #ffffff;
+}
+
+/* Responsive adjustment for small viewports on screen */
+@media screen and (max-width: 860px) {
+  .paper-sheet-a4,
+  .paper-sheet-legal,
+  .print-container,
+  #achievers-printable-paper,
+  #achievers-printable-marking-scheme {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-height: auto !important;
+    padding: 16px 20px !important;
+  }
+}
+
+/* =====================================================================
+   2. Dedicated CSS Print Rules (@media print)
+   Strictly Enforcing Standard A4 Dimensions & Complete UI Clean-up
+   ===================================================================== */
+@media print {
+  @page {
+    size: A4 portrait !important;
+    margin: 0 !important; /* Strict 0 margin: container explicitly governs standard 20mm margins */
+  }
+
+  /* Reset viewport and root ancestors to prevent narrow column squishing or overflow */
+  html, body {
+    width: 100% !important;
+    min-width: 100% !important;
+    max-width: 100% !important;
+    min-height: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background-color: #ffffff !important;
+    background: #ffffff !important;
+    color: #000000 !important;
+    font-size: 11pt !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Force all app layout containers to be clean blocks without sidebars or padding */
+  #root,
+  #root > div,
+  main,
+  main > div {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    box-shadow: none !important;
+    display: block !important;
+    box-sizing: border-box !important;
+  }
+
+  /* Hide all interactive elements, navigation bars, toolbars, sidebars, modals & buttons */
+  nav,
+  header,
+  footer,
+  aside,
+  button,
+  select,
+  input[type="button"],
+  input[type="submit"],
+  .no-print,
+  [data-print-hide="true"],
+  .paper-toolbar,
+  .settings-panel,
+  .modal-backdrop,
+  .modal-overlay,
+  .quick-actions-bar,
+  .tab-nav,
+  [class*="no-print"],
+  [data-no-print],
+  .print\:hidden {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+
+  /* Dedicated Standard A4 Printable Paper Container */
+  #achievers-printable-paper,
+  #achievers-printable-marking-scheme,
+  .print-container {
+    width: 210mm !important;
+    min-width: 210mm !important;
+    max-width: 210mm !important;
+    min-height: 297mm !important;
+    box-sizing: border-box !important;
+    padding: 20mm !important;
+    margin: 0 auto !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+    background-color: #ffffff !important;
+    overflow: visible !important;
+    display: block !important;
+    float: none !important;
+    page-break-after: auto;
+  }
+
+  /* Dedicated Legal Sheet Override only when explicitly requested */
+  [data-paper-size="legal"]#achievers-printable-paper,
+  [data-paper-size="legal"]#achievers-printable-marking-scheme,
+  [data-paper-size="legal"].print-container {
+    width: 215.9mm !important;
+    min-width: 215.9mm !important;
+    max-width: 215.9mm !important;
+    min-height: 355.6mm !important;
+  }
+
+  /* Two-column layout enforcement during printing */
+  .print-grid-2 {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+    column-gap: 1.5rem !important;
+    row-gap: 0.75rem !important;
+  }
+
+  .page-break-before {
+    page-break-before: always !important;
+    break-before: page !important;
+  }
+
+  .question-item {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+    border-color: transparent !important;
+  }
+
+  .section-header-print {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  /* Ensure lines and borders render crisp and solid in print */
+  .border-print {
+    border-color: #000000 !important;
+  }
+
+  /* Ensure handwriting and tracing lines are high contrast in print */
+  .handwriting-lines-4 {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Pre-Primary specific coloring box print-color enforcement */
+  .handwriting-lines-urdu {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  
+  .trace-char-box {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Pre-Primary worksheet footer styling in print */
+  .pre-primary-footer {
+    display: flex !important;
+  }
+}
