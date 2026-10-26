@@ -134,13 +134,20 @@ export const parseRawOcrTextToExamPaper = (
       });
 
       if (options.length === 0) {
-        // Fallback default options
-        options.push(
-          { id: '1', label: 'A', text: 'Option 1' },
-          { id: '2', label: 'B', text: 'Option 2' },
-          { id: '3', label: 'C', text: 'Option 3' },
-          { id: '4', label: 'D', text: 'Option 4' }
-        );
+        // No options could be parsed from the OCR text.
+        // Create 4 empty option slots with labels only — NO placeholder text.
+        const emptyLabels = detectedLang === 'ur'
+          ? ['الف', 'ب', 'ج', 'د']
+          : detectedLang === 'ar'
+          ? ['أ', 'ب', 'ج', 'د']
+          : ['A', 'B', 'C', 'D'];
+        emptyLabels.forEach((label, idx) => {
+          options.push({
+            id: `opt-empty-${Date.now()}-${idx}`,
+            label,
+            text: '',
+          });
+        });
       }
 
       currentSection.questions.push({
@@ -196,28 +203,36 @@ export const parseRawOcrTextToExamPaper = (
     sections.push(currentSection);
   }
 
-  // If no sections were identified, wrap raw lines in a default section
+  // If no sections were identified and there are parseable lines,
+  // create a single default section from lines that look like questions.
+  // NEVER fabricate dummy option text — leave options empty.
   if (sections.length === 0 || sections.every((s) => s.questions.length === 0)) {
-    sections.push({
-      id: 'sec-ocr-default',
-      sectionTitle: detectedLang === 'ur' ? 'امتحانی پرچہ - سوالات' : 'Examination Questions',
-      instructions: 'Attempt all questions with neat handwriting.',
-      totalMarks: 30,
-      questions: lines.slice(0, 8).map((line, idx) => ({
-        id: `q-fallback-${idx}`,
-        type: idx < 3 ? 'mcq' : 'short',
-        questionNumber: idx + 1,
-        text: line,
-        marks: idx < 3 ? 1 : 4,
-        options: idx < 3 ? [
-          { id: '1', label: 'A', text: 'Option A' },
-          { id: '2', label: 'B', text: 'Option B' },
-          { id: '3', label: 'C', text: 'Option C' },
-          { id: '4', label: 'D', text: 'Option D' },
-        ] : undefined,
-        language: detectedLang,
-      })),
-    });
+    // Filter to only lines that actually look like question content
+    const questionLines = lines.filter(l =>
+      l.match(/^(?:Q\d*|Question|\d+[\.\-\)]|سوال)/i) || l.length > 15
+    );
+
+    if (questionLines.length > 0) {
+      sections.length = 0; // clear any empty sections
+      sections.push({
+        id: 'sec-ocr-default',
+        sectionTitle: detectedLang === 'ur' ? 'امتحانی پرچہ - سوالات' : 'Examination Questions',
+        instructions: detectedLang === 'ur'
+          ? 'تمام سوالات صاف خط میں حل کریں۔'
+          : 'Attempt all questions with neat handwriting.',
+        totalMarks: questionLines.length * 4,
+        questions: questionLines.slice(0, 10).map((line, idx) => ({
+          id: `q-parsed-${Date.now()}-${idx}`,
+          type: 'short' as const,
+          questionNumber: idx + 1,
+          text: line.replace(/^(?:Q\d*|Question|\d+[\.\-\)]|سوال\s*(?:نمبر)?\s*\d*[:\.]?)\s*/i, ''),
+          marks: 4,
+          language: detectedLang,
+        })),
+      });
+    }
+    // If no question-like lines either, sections stays empty —
+    // the UI will render a clean empty-state prompt.
   }
 
   // Recalculate total marks

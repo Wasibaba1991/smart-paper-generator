@@ -25,7 +25,8 @@ export const ChapterImageUploader: React.FC<ChapterImageUploaderProps> = ({
   onPreviewImage,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [selectedPresetId, setSelectedPresetId] = useState<string>('chap-islamiat-hujurat');
+  // No default preset — teacher must actively choose to load demo pages
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('');
 
   const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -54,7 +55,9 @@ export const ChapterImageUploader: React.FC<ChapterImageUploaderProps> = ({
 
   const handleLoadPreset = (preset: ChapterCollectionPreset) => {
     setSelectedPresetId(preset.id);
-    setPages(preset.pages);
+    // Mark each preset page as a demo so the generator can distinguish
+    // real teacher uploads from demo placeholders
+    setPages(preset.pages.map((p) => ({ ...p, isDemo: true })));
   };
 
   const handleRemovePage = (id: string) => {
@@ -102,9 +105,15 @@ export const ChapterImageUploader: React.FC<ChapterImageUploaderProps> = ({
         {/* Quick Presets Picker */}
         <div className="mb-4">
           <label className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-            <BookMarked className="w-4 h-4 text-emerald-600" />
-            <span>Or load preset curriculum chapter samples:</span>
+            <BookMarked className="w-4 h-4 text-amber-500" />
+            <span>Demo Samples (For Testing Only)</span>
+            <span className="ml-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 uppercase tracking-wide">
+              ⚠ Not real textbook pages
+            </span>
           </label>
+          <p className="text-[11px] text-slate-500 mb-2">
+            These are sample SVG placeholders for demonstration. For real AI grounding, upload your own scanned textbook pages or chapter snapshots above.
+          </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {PRESET_CHAPTER_COLLECTIONS.map((preset) => {
               const isSelected = selectedPresetId === preset.id && pages.length === preset.pages.length;
@@ -139,7 +148,11 @@ export const ChapterImageUploader: React.FC<ChapterImageUploaderProps> = ({
           {pages.map((page) => (
             <div
               key={page.id}
-              className="group relative bg-slate-50 rounded-lg border border-slate-200 overflow-hidden hover:shadow-md transition-all flex flex-col"
+              className={`group relative rounded-lg border overflow-hidden hover:shadow-md transition-all flex flex-col ${
+                (page as UploadedChapterPage & { isDemo?: boolean }).isDemo
+                  ? 'bg-amber-50 border-amber-300'
+                  : 'bg-slate-50 border-slate-200'
+              }`}
             >
               {/* Page Number Badge */}
               <div className="absolute top-1.5 left-1.5 z-10 bg-[#0F284E] text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow">
@@ -180,8 +193,21 @@ export const ChapterImageUploader: React.FC<ChapterImageUploaderProps> = ({
                 )}
               </div>
 
+              {/* Demo Badge */}
+              {(page as UploadedChapterPage & { isDemo?: boolean }).isDemo && (
+                <div className="absolute bottom-8 left-0 right-0 z-10 flex justify-center pointer-events-none">
+                  <span className="text-[9px] font-black uppercase bg-amber-400 text-slate-900 px-1.5 py-0.5 rounded shadow">
+                    DEMO — Replace with real scan
+                  </span>
+                </div>
+              )}
+
               {/* Page Title */}
-              <div className="p-1.5 text-[11px] font-medium text-slate-700 truncate bg-white">
+              <div className={`p-1.5 text-[11px] font-medium truncate ${
+                (page as UploadedChapterPage & { isDemo?: boolean }).isDemo
+                  ? 'bg-amber-50 text-amber-800'
+                  : 'bg-white text-slate-700'
+              }`}>
                 {page.chapterTitle || page.name}
               </div>
             </div>

@@ -257,17 +257,54 @@ export const BlueprintClarificationModal: React.FC<BlueprintClarificationModalPr
                 <span>Generation Verification</span>
               </span>
               <ul className="space-y-1.5 text-slate-600">
+
+                {/* Dynamic upload status */}
+                {(() => {
+                  const realPages = uploadedPages.filter(
+                    (p) => !(p as typeof p & { isDemo?: boolean }).isDemo
+                  );
+                  const demoPages = uploadedPages.filter(
+                    (p) => !!(p as typeof p & { isDemo?: boolean }).isDemo
+                  );
+
+                  if (uploadedPages.length === 0) {
+                    return (
+                      <li className="flex items-start gap-1.5 text-sky-700 font-medium bg-sky-50 border border-sky-200 rounded px-2 py-1.5">
+                        <HelpCircle className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-sky-500" />
+                        <span>
+                          No chapter pages uploaded — questions will be generated as editable scaffolds
+                          based on your subject &amp; grade. Upload real textbook pages (Step 1) for
+                          chapter-grounded questions.
+                        </span>
+                      </li>
+                    );
+                  }
+
+                  return (
+                    <>
+                      {realPages.length > 0 && (
+                        <li className="flex items-center gap-1.5 text-emerald-700 font-semibold">
+                          <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span>{realPages.length} real textbook page{realPages.length > 1 ? 's' : ''} uploaded — questions will reference chapter content</span>
+                        </li>
+                      )}
+                      {demoPages.length > 0 && (
+                        <li className="flex items-center gap-1.5 text-amber-700 font-semibold">
+                          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span>{demoPages.length} demo placeholder page{demoPages.length > 1 ? 's' : ''} — replace with real scans for chapter-grounded questions</span>
+                        </li>
+                      )}
+                    </>
+                  );
+                })()}
+
                 <li className="flex items-center gap-1.5 text-emerald-700 font-semibold">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>{uploadedPages.length} textbook pages linked as syllabus base</span>
-                </li>
-                <li className="flex items-center gap-1.5 text-emerald-700 font-semibold">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
                   <span>Official Achievers Islamic Academy letterhead applied</span>
                 </li>
                 <li className="flex items-center gap-1.5 text-emerald-700 font-semibold">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Complete Teacher Marking Scheme & Solutions included</span>
+                  <CheckCircle2 className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span>Complete Teacher Marking Scheme &amp; Solutions included</span>
                 </li>
               </ul>
             </div>

@@ -97,6 +97,8 @@ export interface Question {
   countItemsList?: { icon: string; count: number; label: string }[];
   marks: number;
   language?: Language;
+  /** True when this question was auto-generated as a scaffold and has NOT been edited by the teacher yet */
+  isScaffold?: boolean;
 }
 
 export interface ExamSection {

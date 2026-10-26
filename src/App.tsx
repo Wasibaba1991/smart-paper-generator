@@ -242,51 +242,56 @@ export function App() {
         // ── Preset path: use the pre-extracted text verbatim ──────────────────
         extractedText = rawPresetText;
       } else {
-        // ── Real upload path: build a structured template from user's metadata ─
-        // The teacher fills in / corrects the questions in OcrExtractedEditor.
-        const isUrdu = resolvedLanguage === 'ur';
-        const isArabic = resolvedLanguage === 'ar';
+        // ── Real upload path ───────────────────────────────────────────────────
+        // We cannot perform actual OCR in-browser without a cloud API.
+        // Instead we produce a CLEAN, EMPTY scaffold from the teacher's metadata.
+        //
+        // KEY DESIGN DECISION: Do NOT pre-fill any question text here.
+        // The scaffold only sets up section headers so the parser creates the
+        // correct structure. The teacher then types/pastes real questions into
+        // the OcrExtractedEditor's "Raw OCR Text" tab.
+        //
+        // This guarantees that whatever is exported is ALWAYS real teacher content.
+        const isUrduLang = resolvedLanguage === 'ur';
+        const isArabicLang = resolvedLanguage === 'ar';
 
-        if (isUrdu || isArabic) {
+        if (isUrduLang || isArabicLang) {
           extractedText =
 `The Achievers Islamic Academy
-${resolvedSubject} - ${resolvedGrade}
+${resolvedSubject} — ${resolvedGrade}
 کل نمبر: ${resolvedMarks}   وقت: ${resolvedTime}
 
+⚠ نوٹ: براہ کرم اپنے اصل سوالات نیچے لکھیں۔ یہ ایک خالی سانچہ ہے۔
+
 حصہ اول: معروضی سوالات
-1. (اپنا پہلا سوال یہاں لکھیں)
-(الف) آپشن 1   (ب) آپشن 2   (ج) آپشن 3   (د) آپشن 4
+1. (یہاں اپنا پہلا سوال لکھیں)
+(الف) ________   (ب) ________   (ج) ________   (د) ________
 
-2. (خالی جگہ پُر کریں): ________
-
-حصہ دوم: مختصر سوالات (کوئی سے 5 حل کریں)
+حصہ دوم: مختصر سوالات (کوئی سے حل کریں)
 1. (یہاں اپنا مختصر سوال لکھیں)
-2. (یہاں اپنا دوسرا مختصر سوال لکھیں)
-3. (یہاں اپنا تیسرا مختصر سوال لکھیں)
+2. (یہاں اپنا دوسرا سوال لکھیں)
 
-حصہ سوم: تفصیلی سوالات (کوئی سے 2 حل کریں)
-1. (یہاں اپنا تفصیلی سوال لکھیں)
-2. (یہاں اپنا دوسرا تفصیلی سوال لکھیں)`;
+حصہ سوم: تفصیلی سوالات
+1. (یہاں اپنا تفصیلی سوال لکھیں)`;
         } else {
           extractedText =
 `The Achievers Islamic Academy
-${resolvedSubject} - ${resolvedGrade}
+${resolvedSubject} — ${resolvedGrade}
 Total Marks: ${resolvedMarks}   Time: ${resolvedTime}
 
+⚠ NOTE: This is a blank scaffold. Paste or type your real questions below.
+Replace the placeholder lines with your actual exam content before exporting.
+
 Section A: Objective Questions
-1. (Write your first MCQ question here)
-(A) Option 1   (B) Option 2   (C) Option 3   (D) Option 4
+1. (Type your first MCQ question here)
+(A) ________   (B) ________   (C) ________   (D) ________
 
-2. Fill in the blank: The answer to this question is ________.
+Section B: Short Questions (Attempt any)
+1. (Type your first short question here)
+2. (Type your second short question here)
 
-Section B: Short Questions (Attempt any 5)
-1. (Write your first short question here)
-2. (Write your second short question here)
-3. (Write your third short question here)
-
-Section C: Long Questions (Attempt any 2)
-1. (Write your first long question here)
-2. (Write your second long question here)`;
+Section C: Long Questions
+1. (Type your first long/detailed question here)`;
         }
       }
 
