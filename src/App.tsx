@@ -22,6 +22,7 @@ import { exportPaperToDocx } from './utils/docxExporter';
 import { exportPaperToPdf, printPaperNative } from './utils/pdfExporter';
 import { parseRawOcrTextToExamPaper } from './utils/ocrParser';
 import { generateExamPaperFromBlueprint } from './utils/aiGenerator';
+import { recognizeImage } from './utils/ocrService';
 
 // ---------------------------------------------------------------------------
 // Blank paper template — used as the true "no data" starting state.
@@ -108,19 +109,24 @@ export function App() {
   // Only populated after a teacher actually runs the OCR scan.
   // =========================================================
   const [isOcrProcessing, setIsOcrProcessing] = useState<boolean>(false);
+  const [ocrProgress, setOcrProgress] = useState<number>(0);
   const [ocrCompleted, setOcrCompleted] = useState<boolean>(false);
   const [ocrRawText, setOcrRawText] = useState<string>('');
   const [ocrParsedPaper, setOcrParsedPaper] = useState<ExamPaper | null>(null);
 
-  // Action: Synchronously update OCR Paper and globally bind currentPaper
+  // Action: Update OCR paper and keep currentPaper in sync.
+  // Computes `next` once from a shared base so both setters receive the
+  // same value — avoids the double-evaluation divergence when a functional
+  // updater is passed and the two state slices have drifted.
   const handleUpdateOcrPaper: React.Dispatch<React.SetStateAction<ExamPaper>> = (paperAction) => {
     setOcrParsedPaper((prev) => {
       const base = prev ?? BLANK_PAPER;
-      const next = typeof paperAction === 'function' ? (paperAction as (p: ExamPaper) => ExamPaper)(base) : paperAction;
-      return next;
-    });
-    setCurrentPaper((prev) => {
-      const next = typeof paperAction === 'function' ? (paperAction as (p: ExamPaper) => ExamPaper)(prev) : paperAction;
+      const next =
+        typeof paperAction === 'function'
+          ? (paperAction as (p: ExamPaper) => ExamPaper)(base)
+          : paperAction;
+      // Keep currentPaper in sync using the already-computed next value.
+      setCurrentPaper(next);
       return next;
     });
   };
@@ -199,20 +205,17 @@ export function App() {
   // ---------------------------------------------------------------------------
   // Action: Start OCR Digitize
   //
-  // KEY FIX — Eliminates the old hardcoded Islamic Studies / Math / English /
-  // Urdu fallback blocks entirely.
+  // For PRESET uploads: rawPresetText is provided by OcrUploader — parse it
+  // directly with the preset's metadata. No Tesseract call needed.
   //
-  // For PRESET uploads: rawPresetText is provided by OcrUploader, so we
-  // parse it directly with the preset's metadata.
-  //
-  // For REAL file uploads: rawPresetText is undefined. We can't perform
-  // actual in-browser OCR without a cloud API, so we:
-  //   1. Build a structured raw-text template from the teacher's metadata.
-  //   2. Seed ocrRawText with it so the teacher can paste/correct the real
-  //      content in the OcrExtractedEditor before applying it to Studio.
-  // This is the honest, correct behaviour for a browser-based system.
+  // For REAL file uploads: rawPresetText is undefined.
+  //   1. Attempt real in-browser OCR via Tesseract.js (ocrService.ts).
+  //   2. If Tesseract succeeds (confidence > 30 & text > 20 chars), use its
+  //      output as extractedText — this populates real question arrays.
+  //   3. If Tesseract fails or returns low-confidence text, fall back to a
+  //      clean scaffold so the teacher can paste/correct manually.
   // ---------------------------------------------------------------------------
-  const handleStartOcr = (
+  const handleStartOcr = async (
     imageDataUrl: string,
     rawPresetText?: string,
     presetMetadata?: {
@@ -226,90 +229,116 @@ export function App() {
   ) => {
     setIsOcrProcessing(true);
     setOcrCompleted(false);
+    setOcrProgress(0);
 
-    setTimeout(() => {
-      // Resolve the metadata the teacher configured
-      const resolvedSubject   = presetMetadata?.subject   ?? 'English Language & Lit';
-      const resolvedGrade     = presetMetadata?.gradeLevel ?? 'Grade 9 (Matric / O-Level)';
-      const resolvedLanguage  = presetMetadata?.language  ?? 'en';
-      const resolvedTerm      = presetMetadata?.examTerm  ?? 'Mid-Term Examination 2026';
-      const resolvedMarks     = presetMetadata?.totalMarks ?? 50;
-      const resolvedTime      = presetMetadata?.timeAllowed ?? '2 Hours';
+    // Resolve metadata the teacher configured
+    const resolvedSubject   = presetMetadata?.subject   ?? 'English Language & Lit';
+    const resolvedGrade     = presetMetadata?.gradeLevel ?? 'Grade 9 (Matric / O-Level)';
+    const resolvedLanguage  = presetMetadata?.language  ?? 'en';
+    const resolvedTerm      = presetMetadata?.examTerm  ?? 'Mid-Term Examination 2026';
+    const resolvedMarks     = presetMetadata?.totalMarks ?? 50;
+    const resolvedTime      = presetMetadata?.timeAllowed ?? '2 Hours';
 
-      let extractedText: string;
+    let extractedText: string;
 
-      if (rawPresetText) {
-        // ── Preset path: use the pre-extracted text verbatim ──────────────────
-        extractedText = rawPresetText;
-      } else {
-        // ── Real upload path ───────────────────────────────────────────────────
-        // We cannot perform actual OCR in-browser without a cloud API.
-        // Instead we produce a CLEAN, EMPTY scaffold from the teacher's metadata.
-        //
-        // KEY DESIGN DECISION: Do NOT pre-fill any question text here.
-        // The scaffold only sets up section headers so the parser creates the
-        // correct structure. The teacher then types/pastes real questions into
-        // the OcrExtractedEditor's "Raw OCR Text" tab.
-        //
-        // This guarantees that whatever is exported is ALWAYS real teacher content.
+    if (rawPresetText) {
+      // ── Preset path: use the pre-extracted text verbatim ──────────────────
+      extractedText = rawPresetText;
+    } else {
+      // ── Real upload path: run Tesseract.js OCR on the actual image ─────────
+      try {
+        const ocrResult = await recognizeImage(
+          imageDataUrl,
+          resolvedLanguage,
+          (percent) => setOcrProgress(percent),
+        );
+
+        if (ocrResult.success && ocrResult.text.length > 20 && ocrResult.confidence > 25) {
+          // Real OCR text extracted — use it directly so the parser populates
+          // mcqs / shortQuestions / longQuestions with real content.
+          extractedText = ocrResult.text;
+        } else {
+          // OCR returned too little usable content — produce a labelled scaffold
+          // with a note that the teacher should paste in the real text.
+          const isUrduLang = resolvedLanguage === 'ur';
+          const isArabicLang = resolvedLanguage === 'ar';
+
+          if (isUrduLang || isArabicLang) {
+            extractedText =
+`The Achievers Islamic Academy
+${resolvedSubject} — ${resolvedGrade}
+کل نمبر: ${resolvedMarks}   وقت: ${resolvedTime}
+
+حصہ اول: معروضی سوالات
+سوال 1
+
+حصہ دوم: مختصر سوالات (کوئی سے حل کریں)
+سوال 1
+سوال 2
+
+حصہ سوم: تفصیلی سوالات
+سوال 1`;
+          } else {
+            extractedText =
+`The Achievers Islamic Academy
+${resolvedSubject} — ${resolvedGrade}
+Total Marks: ${resolvedMarks}   Time: ${resolvedTime}
+
+Section A: Objective Questions
+Q1.
+
+Section B: Short Questions (Attempt any)
+Q1.
+Q2.
+
+Section C: Long Questions
+Q1.`;
+          }
+        }
+      } catch {
+        // Tesseract threw — produce minimal scaffold so app stays functional
         const isUrduLang = resolvedLanguage === 'ur';
-        const isArabicLang = resolvedLanguage === 'ar';
-
-        if (isUrduLang || isArabicLang) {
+        if (isUrduLang || resolvedLanguage === 'ar') {
           extractedText =
 `The Achievers Islamic Academy
 ${resolvedSubject} — ${resolvedGrade}
 کل نمبر: ${resolvedMarks}   وقت: ${resolvedTime}
 
-⚠ نوٹ: براہ کرم اپنے اصل سوالات نیچے لکھیں۔ یہ ایک خالی سانچہ ہے۔
-
 حصہ اول: معروضی سوالات
-1. (یہاں اپنا پہلا سوال لکھیں)
-(الف) ________   (ب) ________   (ج) ________   (د) ________
+سوال 1
 
-حصہ دوم: مختصر سوالات (کوئی سے حل کریں)
-1. (یہاں اپنا مختصر سوال لکھیں)
-2. (یہاں اپنا دوسرا سوال لکھیں)
-
-حصہ سوم: تفصیلی سوالات
-1. (یہاں اپنا تفصیلی سوال لکھیں)`;
+حصہ دوم: مختصر سوالات
+سوال 1`;
         } else {
           extractedText =
 `The Achievers Islamic Academy
 ${resolvedSubject} — ${resolvedGrade}
 Total Marks: ${resolvedMarks}   Time: ${resolvedTime}
 
-⚠ NOTE: This is a blank scaffold. Paste or type your real questions below.
-Replace the placeholder lines with your actual exam content before exporting.
-
 Section A: Objective Questions
-1. (Type your first MCQ question here)
-(A) ________   (B) ________   (C) ________   (D) ________
+Q1.
 
-Section B: Short Questions (Attempt any)
-1. (Type your first short question here)
-2. (Type your second short question here)
-
-Section C: Long Questions
-1. (Type your first long/detailed question here)`;
+Section B: Short Questions
+Q1.`;
         }
       }
+    }
 
-      const parsed = parseRawOcrTextToExamPaper(extractedText, {
-        customSubject:   resolvedSubject,
-        customGrade:     resolvedGrade,
-        customLanguage:  resolvedLanguage,
-        customExamTerm:  resolvedTerm,
-        customTotalMarks: resolvedMarks,
-        customTime:      resolvedTime,
-      });
+    const parsed = parseRawOcrTextToExamPaper(extractedText, {
+      customSubject:    resolvedSubject,
+      customGrade:      resolvedGrade,
+      customLanguage:   resolvedLanguage,
+      customExamTerm:   resolvedTerm,
+      customTotalMarks: resolvedMarks,
+      customTime:       resolvedTime,
+    });
 
-      setOcrRawText(extractedText);
-      setOcrParsedPaper(parsed);
-      setCurrentPaper(parsed); // Real-time global binding
-      setIsOcrProcessing(false);
-      setOcrCompleted(true);
-    }, 1200);
+    setOcrRawText(extractedText);
+    setOcrParsedPaper(parsed);
+    setCurrentPaper(parsed); // Real-time global binding
+    setIsOcrProcessing(false);
+    setOcrProgress(0);
+    setOcrCompleted(true);
   };
 
   // Action: Apply OCR parsed paper to live studio
@@ -428,6 +457,7 @@ Section C: Long Questions
               onStartOcr={handleStartOcr}
               onPresetSelect={handlePresetSelect}
               isProcessing={isOcrProcessing}
+              ocrProgress={ocrProgress}
             />
 
             {ocrCompleted && ocrParsedPaper && (

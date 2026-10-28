@@ -12,7 +12,28 @@ export const parseRawOcrTextToExamPaper = (
     customPaperSize?: PaperSize;
   }
 ): ExamPaper => {
-  const lines = rawText.split('\n').map((l) => l.trim()).filter(Boolean);
+  // Strip scaffold / warning marker lines so they never become question content.
+  // These are injected by the real-upload fallback scaffold in App.tsx and must
+  // not pollute the parsed question arrays.
+  const SCAFFOLD_PATTERNS = [
+    /^⚠/,                                           // ⚠ NOTE / ⚠ نوٹ lines
+    /^\(یہاں اپنا/,                                  // Urdu placeholder hints
+    /^\(Type your/i,                                 // English placeholder hints
+    /^\(Write your/i,
+    /^Replace the placeholder/i,
+    /^Paste or type your real/i,
+    /^براہ کرم اپنے اصل سوالات/,
+    /^یہ ایک خالی سانچہ ہے/,
+  ];
+
+  const lines = rawText
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => {
+      if (!l) return false;
+      // Drop scaffold hint lines
+      return !SCAFFOLD_PATTERNS.some((re) => re.test(l));
+    });
   
   // Detect language if not explicitly provided
   let detectedLang: Language = options?.customLanguage || 'en';

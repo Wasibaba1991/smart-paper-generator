@@ -31,6 +31,8 @@ interface OcrUploaderProps {
   ) => void;
   onPresetSelect?: (preset: OcrPreset) => void;
   isProcessing: boolean;
+  /** 0–100 Tesseract recognition progress. Shown when isProcessing=true */
+  ocrProgress?: number;
 }
 
 const SUBJECT_OPTIONS: Subject[] = [
@@ -63,7 +65,7 @@ function getAutoLanguage(subject: Subject): Language {
   return 'en';
 }
 
-export const OcrUploader: React.FC<OcrUploaderProps> = ({ onStartOcr, onPresetSelect, isProcessing }) => {
+export const OcrUploader: React.FC<OcrUploaderProps> = ({ onStartOcr, onPresetSelect, isProcessing, ocrProgress = 0 }) => {
   // When null → user uploaded their own file; when set → preset is active
   const [selectedImage, setSelectedImage] = useState<string>('');
   const [selectedPreset, setSelectedPreset] = useState<OcrPreset | null>(null);
@@ -419,7 +421,11 @@ export const OcrUploader: React.FC<OcrUploaderProps> = ({ onStartOcr, onPresetSe
               {isProcessing ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Processing &amp; Segmenting Document...</span>
+                  <span>
+                    {ocrProgress > 0
+                      ? `Recognizing Text… ${ocrProgress}%`
+                      : 'Processing & Segmenting Document...'}
+                  </span>
                 </>
               ) : !selectedImage ? (
                 <>
@@ -433,6 +439,22 @@ export const OcrUploader: React.FC<OcrUploaderProps> = ({ onStartOcr, onPresetSe
                 </>
               )}
             </button>
+
+            {/* Tesseract progress bar — only visible during real-image OCR */}
+            {isProcessing && ocrProgress > 0 && (
+              <div className="mt-2">
+                <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                  <span>OCR Recognition Progress</span>
+                  <span className="font-semibold text-emerald-700">{ocrProgress}%</span>
+                </div>
+                <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-emerald-500 h-1.5 rounded-full transition-all duration-300"
+                    style={{ width: `${ocrProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Right: Live Enhanced Preview Window */}
