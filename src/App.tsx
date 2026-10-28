@@ -18,6 +18,7 @@ import { PaperStudio } from './components/studio/PaperStudio';
 import { PresetsShowcase } from './components/PresetsShowcase';
 import { PrePrimaryModeView } from './components/preprimary/PrePrimaryModeView';
 import { ImagePreviewModal } from './components/common/ImagePreviewModal';
+import { HandwrittenConverter } from './components/handwritten/HandwrittenConverter';
 import { exportPaperToDocx } from './utils/docxExporter';
 import { exportPaperToPdf, printPaperNative } from './utils/pdfExporter';
 import { parseRawOcrTextToExamPaper } from './utils/ocrParser';
@@ -61,7 +62,7 @@ const BLANK_PAPER: ExamPaper = {
 };
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<'generator' | 'ocr' | 'pre_primary' | 'studio' | 'samples'>('pre_primary');
+  const [activeTab, setActiveTab] = useState<'generator' | 'ocr' | 'pre_primary' | 'studio' | 'samples' | 'handwritten'>('handwritten');
 
   // =========================================================
   // SHARED PAPER STATE — single source of truth for Studio,
@@ -179,7 +180,7 @@ export function App() {
     const activeDoc = (activeTab === 'ocr' && ocrParsedPaper) ? ocrParsedPaper : currentPaper;
     const cleanSub = activeDoc.subject.replace(/[^a-zA-Z0-9]/g, '_');
     const cleanGrade = activeDoc.gradeLevel.replace(/[^a-zA-Z0-9]/g, '_');
-    const paperSize: 'a4' | 'legal' = (activeTab === 'pre_primary') ? 'a4' : (activeDoc.paperSize || 'a4');
+    const paperSize: 'a4' | 'legal' = (activeTab === 'pre_primary' || activeTab === 'handwritten') ? 'a4' : (activeDoc.paperSize || 'a4');
     await exportPaperToPdf(
       'achievers-printable-paper',
       `The_Achievers_Islamic_Academy_${cleanSub}_${cleanGrade}_${paperSize.toUpperCase()}.pdf`,
@@ -189,7 +190,7 @@ export function App() {
 
   // Action: Native Print
   const handlePrint = () => {
-    if (activeTab === 'pre_primary') {
+    if (activeTab === 'pre_primary' || activeTab === 'handwritten') {
       printPaperNative('a4');
     } else {
       const activeDoc = activeTab === 'ocr' && ocrParsedPaper ? ocrParsedPaper : currentPaper;
@@ -387,6 +388,20 @@ Q1.`;
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+        {/* ── NEW: Handwritten to Digital Paper Converter ── */}
+        {activeTab === 'handwritten' && (
+          <div className="animate-in fade-in duration-200">
+            <HandwrittenConverter
+              onPrint={handlePrint}
+              onExportDocx={handleExportDocx}
+              onExportPdf={handleExportPdf}
+              onPaperReady={(paper) => {
+                setCurrentPaper(paper);
+              }}
+            />
+          </div>
+        )}
+
         {/* Dedicated Mode: Pre-Primary / Nursery & KG */}
         {activeTab === 'pre_primary' && (
           <div className="animate-in fade-in duration-200">

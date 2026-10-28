@@ -8,13 +8,14 @@ import {
   FileDown, 
   GraduationCap,
   Layers,
-  ChevronDown
+  ChevronDown,
+  PenLine,
 } from 'lucide-react';
 import type { PaperSize } from '../types/exam';
 
 interface HeaderProps {
-  activeTab: 'generator' | 'ocr' | 'pre_primary' | 'studio' | 'samples';
-  setActiveTab: (tab: 'generator' | 'ocr' | 'pre_primary' | 'studio' | 'samples') => void;
+  activeTab: 'generator' | 'ocr' | 'pre_primary' | 'studio' | 'samples' | 'handwritten';
+  setActiveTab: (tab: 'generator' | 'ocr' | 'pre_primary' | 'studio' | 'samples' | 'handwritten') => void;
   onPrint?: () => void;
   onExportDocx?: () => void;
   onExportPdf?: () => void;
@@ -43,7 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div className="flex items-center justify-between h-16">
           {/* Brand Logo & Name */}
           <div 
-            onClick={() => setActiveTab('generator')}
+            onClick={() => setActiveTab('handwritten')}
             className="flex items-center gap-3 cursor-pointer group"
           >
             <div className="w-10 h-10 rounded-lg bg-white/10 border border-emerald-400/50 p-1 flex items-center justify-center group-hover:bg-white/20 transition-all">
@@ -64,23 +65,39 @@ export const Header: React.FC<HeaderProps> = ({
                 </span>
               </div>
               <p className="text-[11px] text-slate-300 hidden sm:block">
-                Smart Paper Generator & Examination Studio
+                Smart Paper Generator &amp; Examination Studio
               </p>
             </div>
           </div>
 
           {/* Navigation Modes Switcher */}
           <nav className="flex items-center gap-1 sm:gap-1.5">
+            {/* PRIMARY: Handwritten Converter tab */}
+            <button
+              onClick={() => setActiveTab('handwritten')}
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-bold transition-all cursor-pointer ${
+                activeTab === 'handwritten'
+                  ? 'bg-amber-500 text-slate-950 shadow-md ring-2 ring-amber-400/50'
+                  : 'text-amber-300 hover:bg-white/10 hover:text-amber-200'
+              }`}
+              title="Handwritten to Digital Paper Converter"
+            >
+              <PenLine className="w-4 h-4" />
+              <span className="hidden sm:inline">HW Converter</span>
+              <span className="sm:hidden">HW</span>
+            </button>
+
             <button
               onClick={() => setActiveTab('pre_primary')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs sm:text-sm font-black transition-all cursor-pointer ${
+              className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs sm:text-sm font-black transition-all cursor-pointer ${
                 activeTab === 'pre_primary'
                   ? 'bg-amber-400 text-slate-950 shadow-md ring-2 ring-amber-300/50'
                   : 'text-amber-300 hover:bg-white/10 hover:text-amber-200'
               }`}
             >
               <span className="text-sm">🌟</span>
-              <span>Pre-Primary / KG</span>
+              <span className="hidden md:inline">Pre-Primary / KG</span>
+              <span className="md:hidden">KG</span>
             </button>
 
             <button
@@ -105,8 +122,8 @@ export const Header: React.FC<HeaderProps> = ({
               }`}
             >
               <ScanText className="w-4 h-4 text-amber-300" />
-              <span className="hidden sm:inline">OCR & Formatting</span>
-              <span className="sm:hidden">OCR</span>
+              <span className="hidden lg:inline">OCR &amp; Formatting</span>
+              <span className="lg:hidden">OCR</span>
             </button>
 
             <button
@@ -123,7 +140,7 @@ export const Header: React.FC<HeaderProps> = ({
 
             <button
               onClick={() => setActiveTab('samples')}
-              className={`hidden lg:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
+              className={`hidden xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition-all cursor-pointer ${
                 activeTab === 'samples'
                   ? 'bg-emerald-600 text-white shadow-sm'
                   : 'text-slate-200 hover:bg-white/10'
