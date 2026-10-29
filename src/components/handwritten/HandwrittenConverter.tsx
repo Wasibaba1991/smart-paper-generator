@@ -27,7 +27,8 @@ import {
 } from 'lucide-react';
 import type { ExamPaper, Subject, GradeLevel, Language } from '../../types/exam';
 import { recognizeImage } from '../../utils/ocrService';
-import { recognizeWithGemini, validateGeminiKey } from '../../utils/geminiOcrService';
+import { recognizeWithGemini, validateGeminiKey, extractStructuredExamData } from '../../utils/geminiOcrService';
+import type { GeminiSection } from '../../utils/geminiOcrService';
 import { parseRawOcrTextToExamPaper } from '../../utils/ocrParser';
 import { AcademyLetterhead } from '../AcademyLetterhead';
 
@@ -386,12 +387,12 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
   const [geminiKey, setGeminiKey] = useState<string>('');
   const [keyStatus, setKeyStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle');
 
-  // Metadata
-  const [subject, setSubject] = useState<Subject>('Islamic Studies (اسلامیات)');
-  const [grade, setGrade] = useState<GradeLevel>('Grade 9 (Matric / O-Level)');
-  const [examTerm, setExamTerm] = useState<string>('Mid-Term Examination 2026');
-  const [totalMarks, setTotalMarks] = useState<number>(50);
-  const [timeAllowed, setTimeAllowed] = useState<string>('2 Hours');
+  // Metadata — all start empty; populated from Gemini's JSON extraction after image upload
+  const [subject, setSubject] = useState<Subject>('' as Subject);
+  const [grade, setGrade] = useState<GradeLevel>('' as GradeLevel);
+  const [examTerm, setExamTerm] = useState<string>('');
+  const [totalMarks, setTotalMarks] = useState<number>(0);
+  const [timeAllowed, setTimeAllowed] = useState<string>('');
 
   // Load key from session storage on mount
   useEffect(() => {
@@ -506,10 +507,155 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
     setGlobalError(null);
     setGeneratedPaper(null);
 
-    const lang: Language = getAutoLanguage(subject);
+    const useGemini = keyStatus === 'valid' && geminiKey.trim().length > 10;
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // GEMINI PATH: Structured JSON extraction — single call returns metadata
+    // + all questions directly from the image. Zero fallback to dummy values.
+    // ══════════════════════════════════════════════════════════════════════════
+    if (useGemini) {
+      // Mark first image as processing
+      setImages((prev) =>
+        prev.map((i, idx) => idx === 0 ? { ...i, status: 'processing', progress: 0 } : i)
+      );
+
+      // ── Structured extraction from first (front) page ──────────────────
+      const frontImg = images[0];
+      const structuredResult = await extractStructuredExamData(
+        frontImg.dataUrl,
+        geminiKey,
+        (pct) => {
+          setImages((prev) =>
+            prev.map((i) => i.id === frontImg.id ? { ...i, progress: pct } : i)
+          );
+        }
+      );
+
+      if (structuredResult.success || structuredResult.sections.length > 0) {
+        // Mark front page as done
+        const qCount = structuredResult.sections.reduce((n, s) => n + s.questions.length, 0);
+        setImages((prev) =>
+          prev.map((i) =>
+            i.id === frontImg.id
+              ? { ...i, status: 'done', ocrEngine: 'gemini', progress: 100,
+                  ocrText: `[Structured Gemini extraction — ${qCount} questions]` }
+              : i
+          )
+        );
+
+        // ── Process remaining pages (plain text OCR for multi-page merge) ─
+        for (let idx = 1; idx < images.length; idx++) {
+          const img = images[idx];
+          setImages((prev) =>
+            prev.map((i) => i.id === img.id ? { ...i, status: 'processing', progress: 0 } : i)
+          );
+          try {
+            const r = await recognizeWithGemini(img.dataUrl, geminiKey, (pct) => {
+              setImages((prev) => prev.map((i) => i.id === img.id ? { ...i, progress: pct } : i));
+            });
+            setImages((prev) =>
+              prev.map((i) =>
+                i.id === img.id
+                  ? r.success
+                    ? { ...i, status: 'done', ocrEngine: 'gemini', ocrText: r.text, progress: 100 }
+                    : { ...i, status: 'error', progress: 0 }
+                  : i
+              )
+            );
+          } catch {
+            setImages((prev) =>
+              prev.map((i) => i.id === img.id ? { ...i, status: 'error', progress: 0 } : i)
+            );
+          }
+        }
+
+        // ── Build ExamPaper from structured JSON — NO dummy defaults ───────
+        const extractedSubject  = structuredResult.subject   || '';
+        const extractedGrade    = structuredResult.grade     || '';
+        const extractedTerm     = structuredResult.examTerm  || '';
+        const extractedMarks    = structuredResult.totalMarks ?? 0;
+        const extractedTime     = structuredResult.timeAllowed || '';
+        const extractedLang     = structuredResult.language  || 'en';
+
+        // Populate metadata form so teacher can review / correct
+        setSubject(extractedSubject as Subject);
+        setGrade(extractedGrade as GradeLevel);
+        setExamTerm(extractedTerm);
+        setTotalMarks(extractedMarks);
+        setTimeAllowed(extractedTime);
+
+        // Convert GeminiSection[] → ExamSection[]
+        const nowMs = Date.now();
+        const sections = structuredResult.sections.map((sec: GeminiSection, sIdx: number) => ({
+          id: `sec-gemini-${nowMs}-${sIdx}`,
+          sectionTitle: sec.title,
+          instructions: sec.instructions,
+          totalMarks: sec.questions.reduce((s, q) => s + (q.marks ?? 1), 0),
+          questions: sec.questions.map((q, qIdx) => ({
+            id: `q-gemini-${nowMs}-${sIdx}-${qIdx}`,
+            type: q.type,
+            questionNumber: qIdx + 1,
+            text: q.text,
+            marks: q.marks ?? 1,
+            language: extractedLang as Language,
+            options: q.options?.map((o, oIdx) => ({
+              id: `opt-gemini-${nowMs}-${sIdx}-${qIdx}-${oIdx}`,
+              label: o.label,
+              text: o.text,
+            })),
+          })),
+        }));
+
+        const computedTotal = sections.reduce((s, sec) => s + sec.totalMarks, 0);
+
+        const finalPaper: ExamPaper = {
+          id: `gemini-paper-${nowMs}`,
+          academyName: 'The Achievers Islamic Academy',
+          campusName: 'Main Academic Campus',
+          // Only what Gemini extracted from the image — empty string if not found
+          subject: extractedSubject as Subject,
+          gradeLevel: extractedGrade as GradeLevel,
+          examTerm: extractedTerm as any,
+          language: extractedLang as Language,
+          timeAllowed: extractedTime,
+          totalMarks: extractedMarks > 0 ? extractedMarks : (computedTotal > 0 ? computedTotal : 0),
+          date: new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }),
+          instructions: [
+            'Write your Roll Number on the top of question paper immediately.',
+            'Check that the paper contains all the questions and sections mentioned.',
+            'Overwriting or cutting in Objective section will not be awarded any marks.',
+          ],
+          showBismillah: true,
+          showWatermark: true,
+          showStudentTable: true,
+          boardFormat: 'standard',
+          showBubbleSheet: false,
+          layoutColumns: 1,
+          fontSize: 'standard',
+          paperSize: 'a4',
+          sections,
+          createdVia: 'ocr_extract',
+          createdAt: new Date().toISOString(),
+        };
+
+        setGeneratedPaper(finalPaper);
+        onPaperReady(finalPaper);
+        setIsRunning(false);
+        return; // Done — skip Tesseract path
+      }
+
+      // Structured extraction returned nothing — fall through to Tesseract
+      setImages((prev) =>
+        prev.map((i) => i.id === frontImg.id ? { ...i, status: 'error', progress: 0 } : i)
+      );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // TESSERACT FALLBACK PATH (no Gemini key, or structured extraction failed)
+    // ══════════════════════════════════════════════════════════════════════════
+    const lang: Language = getAutoLanguage(subject as Subject);
     const allTexts: string[] = [];
     let anySuccess = false;
-    const useGemini = keyStatus === 'valid' && geminiKey.trim().length > 10;
 
     for (let idx = 0; idx < images.length; idx++) {
       const img = images[idx];
@@ -520,31 +666,29 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
       let extractedText = '';
       let engineUsed: 'gemini' | 'tesseract' = 'tesseract';
 
-      // ── Stage 1: Try Gemini Vision ──────────────────────────────────────
+      // Try Gemini plain OCR even without structured extraction (key exists but structured failed)
       if (useGemini) {
         try {
           const result = await recognizeWithGemini(img.dataUrl, geminiKey, (pct) => {
             setImages((prev) => prev.map((i) => (i.id === img.id ? { ...i, progress: pct } : i)));
           });
-
           if (result.success && result.text.length > 5) {
             extractedText = result.text;
             engineUsed = 'gemini';
             anySuccess = true;
           }
         } catch (e) {
-          console.warn(`Gemini failed for ${img.name}, falling back to Tesseract:`, e);
+          console.warn(`Gemini plain OCR failed for ${img.name}:`, e);
         }
       }
 
-      // ── Stage 2: Tesseract fallback ─────────────────────────────────────
+      // Tesseract fallback
       if (!extractedText) {
         try {
           setImages((prev) => prev.map((i) => (i.id === img.id ? { ...i, progress: 5 } : i)));
           const result = await recognizeImage(img.dataUrl, lang, (pct) => {
             setImages((prev) => prev.map((i) => (i.id === img.id ? { ...i, progress: pct } : i)));
           });
-
           if (result.success && result.text.length > 10) {
             extractedText = result.text;
             engineUsed = 'tesseract';
@@ -571,12 +715,8 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
         setImages((prev) =>
           prev.map((i) =>
             i.id === img.id
-              ? {
-                  ...i,
-                  status: 'error',
-                  progress: 0,
-                  errorMsg: 'Could not extract text — ensure image is clear, well-lit, and in focus.',
-                }
+              ? { ...i, status: 'error', progress: 0,
+                  errorMsg: 'Could not extract text — ensure image is clear, well-lit, and in focus.' }
               : i
           )
         );
@@ -595,17 +735,17 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
       return;
     }
 
+    // Build paper from Tesseract raw text — pass form values only if non-empty
     const merged = allTexts.join('\n\n');
     const paper = parseRawOcrTextToExamPaper(merged, {
-      customSubject: subject,
-      customGrade: grade,
+      customSubject: subject || undefined,
+      customGrade: grade || undefined,
       customLanguage: lang,
-      customExamTerm: examTerm as any,
-      customTotalMarks: totalMarks,
-      customTime: timeAllowed,
+      customExamTerm: examTerm || (undefined as any),
+      customTotalMarks: totalMarks || undefined,
+      customTime: timeAllowed || undefined,
     });
 
-    // Override boardFormat to 'standard' for cleaner Academy letterhead on OCR papers
     const finalPaper: ExamPaper = {
       ...paper,
       boardFormat: 'standard',
@@ -731,7 +871,7 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
               <div className="flex md:flex-col gap-3 text-xs text-slate-300 bg-white/5 rounded-xl p-4 border border-white/10 flex-shrink-0">
                 {[
                   { n: '1', c: 'bg-amber-400 text-slate-900', t: 'Upload 1–4 paper images' },
-                  { n: '2', c: 'bg-sky-400 text-slate-900', t: 'Set subject & metadata' },
+                  { n: '2', c: 'bg-sky-400 text-slate-900', t: 'AI auto-extracts all metadata' },
                   { n: '3', c: 'bg-emerald-400 text-slate-900', t: 'Extract & generate paper' },
                   { n: '4', c: 'bg-rose-400 text-slate-900', t: 'Download Word or Print PDF' },
                 ].map(({ n, c, t }) => (
@@ -859,7 +999,13 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
             <div className="bg-gradient-to-r from-slate-800/80 to-slate-900/80 px-5 py-3.5 border-b border-slate-800 flex items-center gap-2">
               <FileText className="w-4 h-4 text-emerald-400" />
               <span className="font-bold text-sm text-white">Paper Metadata</span>
-              <span className="text-[10px] text-slate-500 ml-1">· Applied to the official Academy letterhead</span>
+              {keyStatus === 'valid' ? (
+                <span className="text-[10px] text-amber-400 font-bold ml-1 bg-amber-900/30 border border-amber-700/40 px-2 py-0.5 rounded-full">
+                  ✔ Auto-extracted by Gemini AI from image
+                </span>
+              ) : (
+                <span className="text-[10px] text-slate-500 ml-1">· Enter manually (no Gemini key)</span>
+              )}
             </div>
             <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <SelectField
@@ -867,14 +1013,14 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
                 label="Subject"
                 value={subject}
                 onChange={(v) => setSubject(v as Subject)}
-                options={SUBJECT_OPTIONS}
+                options={['', ...SUBJECT_OPTIONS]}
               />
               <SelectField
                 icon={<GraduationCap className="w-3 h-3" />}
                 label="Grade / Class"
                 value={grade}
                 onChange={(v) => setGrade(v as GradeLevel)}
-                options={GRADE_OPTIONS}
+                options={['', ...GRADE_OPTIONS]}
               />
               <div className="flex flex-col gap-1.5">
                 <label className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider">
@@ -883,11 +1029,12 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
                 </label>
                 <input
                   type="number"
-                  min={5}
+                  min={0}
                   max={200}
-                  value={totalMarks}
+                  value={totalMarks || ''}
                   onChange={(e) => setTotalMarks(Number(e.target.value))}
-                  className="bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 outline-none transition-all"
+                  placeholder={keyStatus === 'valid' ? 'From image…' : 'e.g. 50'}
+                  className="bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 outline-none transition-all placeholder:text-slate-600"
                 />
               </div>
               <div className="flex flex-col gap-1.5">
@@ -899,7 +1046,7 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
                   type="text"
                   value={timeAllowed}
                   onChange={(e) => setTimeAllowed(e.target.value)}
-                  placeholder="e.g. 2 Hours 30 Minutes"
+                  placeholder={keyStatus === 'valid' ? 'From image…' : 'e.g. 2 Hours 30 Minutes'}
                   className="bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 outline-none transition-all placeholder:text-slate-600"
                 />
               </div>
@@ -915,10 +1062,16 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
                   type="text"
                   value={examTerm}
                   onChange={(e) => setExamTerm(e.target.value)}
-                  placeholder="e.g. Mid-Term Examination 2026"
+                  placeholder={keyStatus === 'valid' ? 'Auto-extracted from image…' : 'e.g. Mid-Term Examination 2026'}
                   className="bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 outline-none transition-all placeholder:text-slate-600 max-w-sm"
                 />
               </div>
+              {keyStatus === 'valid' && (
+                <p className="text-[11px] text-slate-600 mt-2 flex items-center gap-1.5">
+                  <Sparkles className="w-3 h-3 text-amber-500" />
+                  Fields are populated automatically after AI extracts them from your image. You can correct them if needed.
+                </p>
+              )}
             </div>
           </div>
 

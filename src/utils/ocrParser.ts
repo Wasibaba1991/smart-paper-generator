@@ -49,8 +49,9 @@ export const parseRawOcrTextToExamPaper = (
     }
   }
 
-  // Detect Subject (respect customSubject first)
-  let detectedSubject: Subject = options?.customSubject || 'English Language & Lit';
+  // Detect Subject (respect customSubject first; otherwise try to detect from text)
+  // No hardcoded fallback — if nothing is found, leave as empty string.
+  let detectedSubject: Subject = options?.customSubject || ('' as Subject);
   if (!options?.customSubject) {
     if (rawText.includes('اسلامیات') || rawText.includes('قرآن') || rawText.includes('حدیث') || rawText.includes('Islamic Studies')) {
       detectedSubject = 'Islamic Studies (اسلامیات)';
@@ -62,13 +63,12 @@ export const parseRawOcrTextToExamPaper = (
       detectedSubject = 'Arabic Language (اللغة العربية)';
     } else if (rawText.includes('Science') || rawText.includes('سائنس')) {
       detectedSubject = 'General Science (سائنس)';
-    } else if (detectedLang === 'ur') {
-      detectedSubject = 'Urdu Literature & Grammar (اردو)';
     }
+    // No fallback to any default subject — if none detected, stays empty
   }
 
-  // Detect Total Marks
-  let totalMarks = options?.customTotalMarks || 50;
+  // Detect Total Marks — 0 means not found (no hardcoded default)
+  let totalMarks = options?.customTotalMarks || 0;
   if (!options?.customTotalMarks) {
     const marksMatch = rawText.match(/(?:Total Marks|کل نمبر|Marks|نمبر)[:\s]*(\d+)/i);
     if (marksMatch && marksMatch[1]) {
@@ -76,8 +76,8 @@ export const parseRawOcrTextToExamPaper = (
     }
   }
 
-  // Detect Time
-  let timeAllowed = options?.customTime || '1 Hour 30 Minutes';
+  // Detect Time — empty string means not found (no hardcoded default)
+  let timeAllowed = options?.customTime || '';
   if (!options?.customTime) {
     const timeMatch = rawText.match(/(?:Time|وقت)[:\s]*([^\n]+)/i);
     if (timeMatch && timeMatch[1]) {
@@ -263,8 +263,9 @@ export const parseRawOcrTextToExamPaper = (
     id: `ocr-paper-${Date.now()}`,
     academyName: 'The Achievers Islamic Academy',
     campusName: 'Main Academic Campus',
-    examTerm: options?.customExamTerm || 'Mid-Term Examination 2026',
-    gradeLevel: options?.customGrade || 'Grade 9 (Matric / O-Level)',
+    // No hardcoded fallbacks — use only what was found in the OCR text or supplied via options
+    examTerm: (options?.customExamTerm || '') as any,
+    gradeLevel: (options?.customGrade || '') as any,
     subject: detectedSubject,
     language: detectedLang,
     timeAllowed,
