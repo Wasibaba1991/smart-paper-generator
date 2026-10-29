@@ -1,30 +1,35 @@
-import React, { useRef, useState, useCallback } from 'react';
+import React, { useRef, useState, useCallback, useEffect } from 'react';
 import {
   UploadCloud,
-  Image as ImageIcon,
   X,
   RefreshCw,
   Sparkles,
   CheckCircle2,
   AlertCircle,
-  FileText,
-  BookOpen,
   Clock,
   Hash,
   GraduationCap,
   Printer,
   FileDown,
-  Download,
   ZoomIn,
-  ScanText,
-  ChevronRight,
-  Layers,
+  BookOpen,
+  AlertTriangle,
+  FileText,
+  ChevronDown,
+  Image as ImageIcon,
+  Key,
+  Eye,
+  EyeOff,
+  Cpu,
+  ScanLine,
+  Zap,
+  Info,
 } from 'lucide-react';
-import type { ExamPaper, Subject, GradeLevel, Language, ExamTerm } from '../../types/exam';
+import type { ExamPaper, Subject, GradeLevel, Language } from '../../types/exam';
 import { recognizeImage } from '../../utils/ocrService';
+import { recognizeWithGemini, validateGeminiKey } from '../../utils/geminiOcrService';
 import { parseRawOcrTextToExamPaper } from '../../utils/ocrParser';
 import { AcademyLetterhead } from '../AcademyLetterhead';
-import { QuestionItem } from '../studio/QuestionItem';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -36,9 +41,10 @@ interface UploadedImage {
   dataUrl: string;
   name: string;
   sizeKB: number;
+  label: string; // e.g. "Front Page", "Back Page", "Page 3", "Page 4"
   status: 'pending' | 'processing' | 'done' | 'error';
   ocrText?: string;
-  ocrConfidence?: number;
+  ocrEngine?: 'gemini' | 'tesseract';
   progress?: number;
   errorMsg?: string;
 }
@@ -48,14 +54,17 @@ interface HandwrittenConverterProps {
   onExportDocx: () => void;
   onExportPdf: () => void;
   onPaperReady: (paper: ExamPaper) => void;
+  currentPaper: ExamPaper;
 }
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const MAX_IMAGES = 3;
-const MIN_IMAGES = 2;
+const MAX_IMAGES = 4;
+const SESSION_KEY = 'aia_gemini_api_key';
+
+const PAGE_LABELS = ['Front Page', 'Back Page', 'Page 3', 'Page 4'];
 
 const SUBJECT_OPTIONS: Subject[] = [
   'Islamic Studies (اسلامیات)',
@@ -88,6 +97,272 @@ function getAutoLanguage(subject: Subject): Language {
 }
 
 // ---------------------------------------------------------------------------
+// Sub-component: Gemini API Key Panel
+// ---------------------------------------------------------------------------
+
+const GeminiKeyPanel: React.FC<{
+  apiKey: string;
+  keyStatus: 'idle' | 'validating' | 'valid' | 'invalid';
+  onKeyChange: (k: string) => void;
+  onValidate: () => void;
+}> = ({ apiKey, keyStatus, onKeyChange, onValidate }) => {
+  const [showKey, setShowKey] = useState(false);
+
+  return (
+    <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+      {/* Panel Header */}
+      <div className="bg-gradient-to-r from-slate-800/80 to-slate-900/80 px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Zap className="w-4 h-4 text-amber-400" />
+          <span className="font-bold text-sm text-white">AI-Powered OCR</span>
+          <span className="text-[10px] text-slate-500 ml-1">· Google Gemini Vision — Best for handwriting</span>
+        </div>
+        {keyStatus === 'valid' && (
+          <span className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-400 bg-emerald-900/30 border border-emerald-800 px-2.5 py-1 rounded-full">
+            <CheckCircle2 className="w-3 h-3" /> Gemini Active
+          </span>
+        )}
+        {keyStatus === 'idle' && (
+          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 bg-slate-800/60 border border-slate-700 px-2.5 py-1 rounded-full">
+            <Cpu className="w-3 h-3" /> Tesseract fallback
+          </span>
+        )}
+      </div>
+
+      <div className="p-5">
+        <div className="flex flex-col sm:flex-row gap-3">
+          {/* Key input */}
+          <div className="relative flex-1">
+            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+              <Key className="w-4 h-4" />
+            </div>
+            <input
+              type={showKey ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => onKeyChange(e.target.value)}
+              placeholder="Enter your Google AI (Gemini) API key — AIzaSy..."
+              className="w-full bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-slate-200 text-sm rounded-xl pl-10 pr-10 py-2.5 outline-none transition-all placeholder:text-slate-600 font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => setShowKey(!showKey)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+
+          {/* Validate button */}
+          <button
+            onClick={onValidate}
+            disabled={!apiKey.trim() || keyStatus === 'validating'}
+            className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-all active:scale-95 whitespace-nowrap"
+          >
+            {keyStatus === 'validating' ? (
+              <>
+                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                Verifying…
+              </>
+            ) : (
+              <>
+                <Zap className="w-4 h-4" />
+                Verify & Enable
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Status messages */}
+        {keyStatus === 'valid' && (
+          <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            Gemini Vision enabled — uploads will use AI for superior handwriting extraction.
+          </p>
+        )}
+        {keyStatus === 'invalid' && (
+          <p className="mt-2 text-xs text-red-400 flex items-center gap-1.5">
+            <AlertCircle className="w-3.5 h-3.5" />
+            Key invalid. Check it at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="underline hover:text-red-300">aistudio.google.com</a> — falling back to Tesseract.
+          </p>
+        )}
+        {keyStatus === 'idle' && !apiKey && (
+          <p className="mt-2 text-xs text-slate-500 flex items-center gap-1.5">
+            <Info className="w-3.5 h-3.5" />
+            No key? Get a free one at{' '}
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline hover:text-amber-300">
+              aistudio.google.com
+            </a>
+            . Without a key, Tesseract OCR runs locally.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Sub-component: Image Thumbnail Card
+// ---------------------------------------------------------------------------
+
+const ImageCard: React.FC<{
+  img: UploadedImage;
+  onRemove: (id: string) => void;
+  onPreview: (url: string) => void;
+}> = ({ img, onRemove, onPreview }) => {
+  const statusColors = {
+    pending: 'border-slate-600 bg-slate-800/60',
+    processing: 'border-blue-500 bg-blue-950/40',
+    done: 'border-emerald-500 bg-emerald-950/30',
+    error: 'border-red-500 bg-red-950/30',
+  };
+
+  return (
+    <div className={`relative group rounded-xl border-2 overflow-hidden transition-all duration-300 ${statusColors[img.status]}`}>
+      {/* Label badge */}
+      <div className="absolute top-0 left-0 right-0 z-10 bg-gradient-to-b from-slate-900/90 to-transparent px-2 py-1.5 flex items-center justify-between">
+        <span className="text-[10px] font-black text-white uppercase tracking-wider bg-slate-800/80 px-1.5 py-0.5 rounded">
+          {img.label}
+        </span>
+        {img.ocrEngine && img.status === 'done' && (
+          <span className={`text-[9px] font-black px-1 py-0.5 rounded ${img.ocrEngine === 'gemini' ? 'bg-amber-500 text-slate-900' : 'bg-slate-600 text-slate-200'}`}>
+            {img.ocrEngine === 'gemini' ? '✦ AI' : 'OCR'}
+          </span>
+        )}
+      </div>
+
+      {/* Thumbnail */}
+      <div className="relative aspect-[3/4] bg-slate-900 overflow-hidden">
+        {img.dataUrl ? (
+          <img
+            src={img.dataUrl}
+            alt={img.label}
+            className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center">
+            <ImageIcon className="w-8 h-8 text-slate-600" />
+          </div>
+        )}
+
+        {/* Processing overlay */}
+        {img.status === 'processing' && (
+          <div className="absolute inset-0 bg-slate-900/75 flex flex-col items-center justify-center gap-2">
+            <div className="relative w-12 h-12">
+              <svg className="w-12 h-12 -rotate-90" viewBox="0 0 36 36">
+                <circle cx="18" cy="18" r="15.9" fill="none" stroke="#1e293b" strokeWidth="3" />
+                <circle
+                  cx="18" cy="18" r="15.9" fill="none"
+                  stroke="#3b82f6" strokeWidth="3"
+                  strokeDasharray={`${(img.progress ?? 0)} 100`}
+                  strokeLinecap="round"
+                />
+              </svg>
+              <span className="absolute inset-0 flex items-center justify-center text-[10px] font-black text-blue-300">
+                {img.progress ?? 0}%
+              </span>
+            </div>
+            <span className="text-[10px] text-blue-300 font-semibold">Extracting…</span>
+          </div>
+        )}
+
+        {/* Done overlay */}
+        {img.status === 'done' && (
+          <div className="absolute bottom-0 left-0 right-0 bg-emerald-900/80 px-2 py-1 text-center">
+            <span className="text-[9px] text-emerald-300 font-bold">Text extracted ✓</span>
+          </div>
+        )}
+
+        {/* Error overlay */}
+        {img.status === 'error' && (
+          <div className="absolute bottom-0 left-0 right-0 bg-red-900/80 px-2 py-1 text-center">
+            <span className="text-[9px] text-red-300 font-bold">Extraction failed</span>
+          </div>
+        )}
+
+        {/* Hover: preview button */}
+        {img.dataUrl && (
+          <button
+            onClick={() => onPreview(img.dataUrl)}
+            className="absolute top-8 left-1 w-7 h-7 bg-slate-900/80 border border-slate-600 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:border-blue-400"
+          >
+            <ZoomIn className="w-3.5 h-3.5 text-slate-300" />
+          </button>
+        )}
+
+        {/* Remove button */}
+        <button
+          onClick={() => onRemove(img.id)}
+          className="absolute top-8 right-1 w-7 h-7 bg-red-900/80 border border-red-700 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600"
+        >
+          <X className="w-3.5 h-3.5 text-red-200" />
+        </button>
+      </div>
+
+      {/* File name footer */}
+      <div className="px-2 py-1.5">
+        <p className="text-[10px] text-slate-400 font-semibold truncate">{img.name}</p>
+        <p className="text-[9px] text-slate-600">{img.sizeKB} KB</p>
+      </div>
+    </div>
+  );
+};
+
+// ---------------------------------------------------------------------------
+// Sub-component: Preview Modal
+// ---------------------------------------------------------------------------
+
+const PreviewModal: React.FC<{ url: string; onClose: () => void }> = ({ url, onClose }) => (
+  <div
+    className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-sm flex items-center justify-center p-4"
+    onClick={onClose}
+  >
+    <div className="relative max-w-3xl max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+      <img src={url} alt="Preview" className="rounded-xl object-contain max-h-[85vh] shadow-2xl" />
+      <button
+        onClick={onClose}
+        className="absolute top-2 right-2 w-8 h-8 bg-slate-900/90 border border-slate-700 rounded-lg flex items-center justify-center hover:bg-slate-700 transition-colors"
+      >
+        <X className="w-4 h-4 text-slate-200" />
+      </button>
+    </div>
+  </div>
+);
+
+// ---------------------------------------------------------------------------
+// Sub-component: Select Field
+// ---------------------------------------------------------------------------
+
+const SelectField: React.FC<{
+  icon: React.ReactNode;
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: string[];
+}> = ({ icon, label, value, onChange, options }) => (
+  <div className="flex flex-col gap-1.5">
+    <label className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider">
+      {icon}
+      {label}
+    </label>
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full appearance-none bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 pr-8 transition-all outline-none cursor-pointer"
+      >
+        {options.map((opt) => (
+          <option key={opt} value={opt} className="bg-slate-800">{opt}</option>
+        ))}
+      </select>
+      <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
+    </div>
+  </div>
+);
+
+// ---------------------------------------------------------------------------
 // Main Component
 // ---------------------------------------------------------------------------
 
@@ -96,14 +371,20 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
   onExportDocx,
   onExportPdf,
   onPaperReady,
+  currentPaper,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [globalError, setGlobalError] = useState<string | null>(null);
   const [generatedPaper, setGeneratedPaper] = useState<ExamPaper | null>(null);
-  const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  // Gemini key state
+  const [geminiKey, setGeminiKey] = useState<string>('');
+  const [keyStatus, setKeyStatus] = useState<'idle' | 'validating' | 'valid' | 'invalid'>('idle');
 
   // Metadata
   const [subject, setSubject] = useState<Subject>('Islamic Studies (اسلامیات)');
@@ -112,48 +393,81 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
   const [totalMarks, setTotalMarks] = useState<number>(50);
   const [timeAllowed, setTimeAllowed] = useState<string>('2 Hours');
 
-  // ── Helpers ──────────────────────────────────────────────────────────────
+  // Load key from session storage on mount
+  useEffect(() => {
+    const saved = sessionStorage.getItem(SESSION_KEY);
+    if (saved) {
+      setGeminiKey(saved);
+      setKeyStatus('valid'); // Assume saved key is valid until we try it
+    }
+  }, []);
 
-  const addFiles = useCallback((files: FileList | File[]) => {
-    const arr = Array.from(files);
-    setGlobalError(null);
-    setGeneratedPaper(null);
+  // ── Gemini Key Validation ────────────────────────────────────────────────
 
-    const validFiles = arr.filter((f) => f.type.startsWith('image/')).slice(0, MAX_IMAGES - images.length);
+  const handleValidateKey = useCallback(async () => {
+    setKeyStatus('validating');
+    const { valid, message } = await validateGeminiKey(geminiKey);
+    if (valid) {
+      sessionStorage.setItem(SESSION_KEY, geminiKey.trim());
+      setKeyStatus('valid');
+    } else {
+      sessionStorage.removeItem(SESSION_KEY);
+      setKeyStatus('invalid');
+      console.warn('Gemini key invalid:', message);
+    }
+  }, [geminiKey]);
 
-    if (validFiles.length === 0) return;
+  const handleKeyChange = (k: string) => {
+    setGeminiKey(k);
+    if (keyStatus !== 'idle') setKeyStatus('idle');
+    if (!k.trim()) {
+      sessionStorage.removeItem(SESSION_KEY);
+    }
+  };
 
-    const newImgs: UploadedImage[] = validFiles.map((file) => ({
-      id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      file,
-      dataUrl: '',
-      name: file.name,
-      sizeKB: Math.round(file.size / 1024),
-      status: 'pending',
-    }));
+  // ── File Handling ─────────────────────────────────────────────────────────
 
-    // Read each file as data URL
-    newImgs.forEach((img) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const url = e.target?.result as string;
-        setImages((prev) =>
-          prev.map((i) => (i.id === img.id ? { ...i, dataUrl: url } : i))
-        );
-      };
-      reader.readAsDataURL(img.file);
-    });
+  const addFiles = useCallback(
+    (files: FileList | File[]) => {
+      const arr = Array.from(files).filter((f) => f.type.startsWith('image/'));
+      if (arr.length === 0) return;
+      setGlobalError(null);
+      setGeneratedPaper(null);
 
-    setImages((prev) => {
-      const combined = [...prev, ...newImgs];
-      return combined.slice(0, MAX_IMAGES);
-    });
-  }, [images.length]);
+      const slots = MAX_IMAGES - images.length;
+      const valid = arr.slice(0, slots);
+
+      const newImgs: UploadedImage[] = valid.map((file, idx) => ({
+        id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        file,
+        dataUrl: '',
+        name: file.name,
+        sizeKB: Math.round(file.size / 1024),
+        label: PAGE_LABELS[images.length + idx] || `Page ${images.length + idx + 1}`,
+        status: 'pending',
+      }));
+
+      newImgs.forEach((img) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const url = e.target?.result as string;
+          setImages((prev) => prev.map((i) => (i.id === img.id ? { ...i, dataUrl: url } : i)));
+        };
+        reader.readAsDataURL(img.file);
+      });
+
+      setImages((prev) => [...prev, ...newImgs].slice(0, MAX_IMAGES));
+    },
+    [images.length]
+  );
 
   const removeImage = (id: string) => {
-    setImages((prev) => prev.filter((i) => i.id !== id));
+    setImages((prev) => {
+      const filtered = prev.filter((i) => i.id !== id);
+      // Re-assign labels
+      return filtered.map((img, idx) => ({ ...img, label: PAGE_LABELS[idx] || `Page ${idx + 1}` }));
+    });
     setGlobalError(null);
-    if (images.length <= 1) setGeneratedPaper(null);
   };
 
   const resetAll = () => {
@@ -163,39 +477,28 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
     setIsRunning(false);
   };
 
-  // ── Drag & Drop ──────────────────────────────────────────────────────────
+  // ── Drag & Drop ───────────────────────────────────────────────────────────
 
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(true);
-  };
-
+  const handleDragOver = (e: React.DragEvent) => { e.preventDefault(); setIsDragging(true); };
   const handleDragLeave = () => setIsDragging(false);
-
   const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files.length > 0) {
-      addFiles(e.dataTransfer.files);
-    }
+    e.preventDefault(); setIsDragging(false);
+    if (e.dataTransfer.files.length > 0) addFiles(e.dataTransfer.files);
   };
-
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      addFiles(e.target.files);
-    }
+    if (e.target.files && e.target.files.length > 0) addFiles(e.target.files);
     e.target.value = '';
   };
 
-  // ── Core OCR Pipeline ────────────────────────────────────────────────────
+  // ── OCR Pipeline ──────────────────────────────────────────────────────────
 
-  const handleGeneratePaper = async () => {
-    if (images.length < MIN_IMAGES) {
-      setGlobalError(`Please upload at least ${MIN_IMAGES} handwritten paper images before generating.`);
+  const handleConvert = async () => {
+    if (images.length < 1) {
+      setGlobalError('Please upload at least one handwritten paper image first (Front Page minimum).');
       return;
     }
     if (images.some((i) => !i.dataUrl)) {
-      setGlobalError('Some images are still loading. Please wait a moment then try again.');
+      setGlobalError('Some images are still loading — please wait a moment and try again.');
       return;
     }
 
@@ -204,717 +507,813 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
     setGeneratedPaper(null);
 
     const lang: Language = getAutoLanguage(subject);
-    let allExtractedTexts: string[] = [];
+    const allTexts: string[] = [];
     let anySuccess = false;
+    const useGemini = keyStatus === 'valid' && geminiKey.trim().length > 10;
 
-    // Process each image sequentially
     for (let idx = 0; idx < images.length; idx++) {
       const img = images[idx];
       setImages((prev) =>
-        prev.map((i) => i.id === img.id ? { ...i, status: 'processing', progress: 0 } : i)
+        prev.map((i) => (i.id === img.id ? { ...i, status: 'processing', progress: 0 } : i))
       );
 
-      try {
-        const result = await recognizeImage(
-          img.dataUrl,
-          lang,
-          (percent) => {
-            setImages((prev) =>
-              prev.map((i) => i.id === img.id ? { ...i, progress: percent } : i)
-            );
-          }
-        );
+      let extractedText = '';
+      let engineUsed: 'gemini' | 'tesseract' = 'tesseract';
 
-        if (result.success && result.text.length > 20 && result.confidence > 20) {
-          anySuccess = true;
-          allExtractedTexts.push(`--- Image ${idx + 1}: ${img.name} ---\n${result.text}`);
-          setImages((prev) =>
-            prev.map((i) =>
-              i.id === img.id
-                ? { ...i, status: 'done', ocrText: result.text, ocrConfidence: result.confidence, progress: 100 }
-                : i
-            )
-          );
-        } else {
-          // OCR returned low-confidence text — record as partial
-          const partialText = result.text.trim();
-          if (partialText.length > 10) {
-            allExtractedTexts.push(`--- Image ${idx + 1}: ${img.name} (low confidence) ---\n${partialText}`);
+      // ── Stage 1: Try Gemini Vision ──────────────────────────────────────
+      if (useGemini) {
+        try {
+          const result = await recognizeWithGemini(img.dataUrl, geminiKey, (pct) => {
+            setImages((prev) => prev.map((i) => (i.id === img.id ? { ...i, progress: pct } : i)));
+          });
+
+          if (result.success && result.text.length > 5) {
+            extractedText = result.text;
+            engineUsed = 'gemini';
+            anySuccess = true;
           }
-          setImages((prev) =>
-            prev.map((i) =>
-              i.id === img.id
-                ? {
-                    ...i,
-                    status: result.confidence < 10 ? 'error' : 'done',
-                    ocrConfidence: result.confidence,
-                    progress: 100,
-                    errorMsg:
-                      result.confidence < 10
-                        ? 'Image too blurry or low contrast. Please re-upload a clearer photo.'
-                        : `Low confidence (${result.confidence.toFixed(0)}%). Consider using a clearer image.`,
-                  }
-                : i
-            )
-          );
+        } catch (e) {
+          console.warn(`Gemini failed for ${img.name}, falling back to Tesseract:`, e);
         }
-      } catch (err) {
-        console.error(`OCR failed for image ${img.name}:`, err);
+      }
+
+      // ── Stage 2: Tesseract fallback ─────────────────────────────────────
+      if (!extractedText) {
+        try {
+          setImages((prev) => prev.map((i) => (i.id === img.id ? { ...i, progress: 5 } : i)));
+          const result = await recognizeImage(img.dataUrl, lang, (pct) => {
+            setImages((prev) => prev.map((i) => (i.id === img.id ? { ...i, progress: pct } : i)));
+          });
+
+          if (result.success && result.text.length > 10) {
+            extractedText = result.text;
+            engineUsed = 'tesseract';
+            anySuccess = true;
+          } else if (result.text.trim().length > 5) {
+            extractedText = result.text.trim();
+            anySuccess = true;
+          }
+        } catch (err) {
+          console.error(`Tesseract OCR failed for ${img.name}:`, err);
+        }
+      }
+
+      if (extractedText) {
+        allTexts.push(`--- ${img.label}: ${img.name} ---\n${extractedText}`);
         setImages((prev) =>
           prev.map((i) =>
             i.id === img.id
-              ? { ...i, status: 'error', errorMsg: 'OCR processing failed. Please try a clearer image.', progress: 0 }
+              ? { ...i, status: 'done', ocrText: extractedText, ocrEngine: engineUsed, progress: 100 }
+              : i
+          )
+        );
+      } else {
+        setImages((prev) =>
+          prev.map((i) =>
+            i.id === img.id
+              ? {
+                  ...i,
+                  status: 'error',
+                  progress: 0,
+                  errorMsg: 'Could not extract text — ensure image is clear, well-lit, and in focus.',
+                }
               : i
           )
         );
       }
     }
 
-    // If ALL images failed OCR
-    if (!anySuccess && allExtractedTexts.length === 0) {
+    if (!anySuccess && allTexts.length === 0) {
       setGlobalError(
-        'Could not extract any readable text from the uploaded images. Please ensure the images are:\n' +
-        '• In focus and well-lit\n' +
-        '• Not too small or too dark\n' +
-        '• Contain clearly written handwritten or printed text'
+        'Could not extract readable text from any uploaded image.\n\n' +
+        'Tips:\n• Ensure images are sharp and well-lit\n' +
+        '• Avoid shadows or glare on the paper\n' +
+        '• Handwriting should be clear and distinct\n' +
+        '• Enable Gemini AI (above) for best handwriting recognition'
       );
       setIsRunning(false);
       return;
     }
 
-    // Merge all extracted texts
-    const mergedText = allExtractedTexts.join('\n\n');
-
-    // Parse into ExamPaper
-    const paper = parseRawOcrTextToExamPaper(mergedText, {
+    const merged = allTexts.join('\n\n');
+    const paper = parseRawOcrTextToExamPaper(merged, {
       customSubject: subject,
       customGrade: grade,
       customLanguage: lang,
-      customExamTerm: examTerm as ExamTerm,
+      customExamTerm: examTerm as any,
       customTotalMarks: totalMarks,
       customTime: timeAllowed,
     });
 
-    if (paper.sections.length === 0 || paper.sections.every((s) => s.questions.length === 0)) {
-      setGlobalError(
-        'The OCR extracted some text but could not identify any structured questions. ' +
-        'Please upload clearer images that contain legible question text.'
-      );
-      setIsRunning(false);
-      return;
-    }
+    // Override boardFormat to 'standard' for cleaner Academy letterhead on OCR papers
+    const finalPaper: ExamPaper = {
+      ...paper,
+      boardFormat: 'standard',
+      showBubbleSheet: false,
+      showBismillah: true,
+      showStudentTable: true,
+    };
 
-    setGeneratedPaper(paper);
-    onPaperReady(paper);
+    setGeneratedPaper(finalPaper);
+    onPaperReady(finalPaper);
     setIsRunning(false);
   };
 
-  // ── Derived State ────────────────────────────────────────────────────────
+  // ── Derived ───────────────────────────────────────────────────────────────
 
-  const canGenerate = images.length >= MIN_IMAGES && !isRunning && images.every((i) => !!i.dataUrl);
   const hasResult = !!generatedPaper;
   const totalQCount = generatedPaper
     ? generatedPaper.sections.reduce((sum, s) => sum + s.questions.length, 0)
     : 0;
-  const _lang = generatedPaper?.language ?? getAutoLanguage(subject);
-  const isUrduOrArabic = _lang === 'ur' || _lang === 'ar';
+  const activeLang = generatedPaper?.language ?? getAutoLanguage(subject);
+  const isUrduOrArabic = activeLang === 'ur' || activeLang === 'ar';
+  const processingImg = images.find((i) => i.status === 'processing');
+  const canConvert = images.length > 0 && !isRunning && images.every((i) => !!i.dataUrl);
 
-  // ── Render ───────────────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-200">
-      {/* ─── Mode Banner ─────────────────────────────────────────────── */}
-      <div className="bg-gradient-to-r from-[#0F284E] via-[#1a3261] to-[#0d5c45] rounded-2xl p-6 sm:p-8 text-white shadow-md">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 mb-2 flex-wrap">
-              <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-400 text-slate-900 uppercase tracking-wider">
-                Handwritten Converter
-              </span>
-              <span className="text-xs text-slate-200 font-semibold">
-                The Achievers Islamic Academy
-              </span>
-            </div>
-            <h1 className="text-2xl sm:text-3xl font-black tracking-tight flex items-center gap-3">
-              <ScanText className="w-7 h-7 text-amber-300 flex-shrink-0" />
-              Handwritten to Digital Paper Converter
-            </h1>
-            <p className="text-xs sm:text-sm text-slate-200 mt-2 max-w-2xl leading-relaxed">
-              Upload <strong className="text-amber-300">2–3 handwritten paper images</strong> or snapshots.
-              The system uses OCR to extract real question content and formats it into an
-              official Academy exam paper — no dummy data, no placeholders.
-            </p>
-          </div>
-          <div className="flex flex-col gap-2 text-xs text-slate-200 bg-white/10 rounded-xl p-4 border border-white/20 min-w-[180px]">
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-amber-400 text-slate-900 font-black text-xs flex items-center justify-center flex-shrink-0">1</span>
-              <span>Upload 2–3 images</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-emerald-400 text-slate-900 font-black text-xs flex items-center justify-center flex-shrink-0">2</span>
-              <span>Set paper metadata</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="w-6 h-6 rounded-full bg-sky-400 text-slate-900 font-black text-xs flex items-center justify-center flex-shrink-0">3</span>
-              <span>Generate & export</span>
-            </div>
-          </div>
-        </div>
-      </div>
+    <>
+      {/* Image preview lightbox */}
+      {previewUrl && <PreviewModal url={previewUrl} onClose={() => setPreviewUrl(null)} />}
 
-      {/* ─── Main Layout ─────────────────────────────────────────────── */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Hidden file input */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={handleFileInput}
+      />
 
-        {/* ── Left: Upload Zone + Metadata ──────────────────────────── */}
-        <div className="lg:col-span-5 space-y-4">
+      {/* ════════════════════════════════════════════════════════════════════
+          PAGE WRAPPER
+         ════════════════════════════════════════════════════════════════════ */}
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-[#0a1628] to-[#091420] relative overflow-hidden">
 
-          {/* Upload Zone */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-gradient-to-r from-[#0F284E] to-[#1a3261] text-white px-5 py-3 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <UploadCloud className="w-4 h-4 text-emerald-300" />
-                <span className="font-bold text-sm">Upload Handwritten Images</span>
-              </div>
-              <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
-                images.length >= MAX_IMAGES
-                  ? 'bg-amber-400 text-slate-900'
-                  : 'bg-white/20 text-white'
-              }`}>
-                {images.length} / {MAX_IMAGES}
-              </span>
-            </div>
-            <div className="p-4 space-y-4">
-              {/* Drop Zone */}
-              <div
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-                onClick={() => images.length < MAX_IMAGES && fileInputRef.current?.click()}
-                className={`border-2 border-dashed rounded-xl p-6 text-center transition-all cursor-pointer flex flex-col items-center justify-center min-h-[130px] ${
-                  isDragging
-                    ? 'border-emerald-500 bg-emerald-50 scale-[1.01]'
-                    : images.length >= MAX_IMAGES
-                    ? 'border-slate-200 bg-slate-50 cursor-not-allowed opacity-60'
-                    : 'border-slate-300 hover:border-emerald-500 bg-slate-50/50 hover:bg-emerald-50/20'
-                }`}
-              >
-                <UploadCloud className={`w-10 h-10 mb-2 ${isDragging ? 'text-emerald-600' : 'text-emerald-500'}`} />
-                {images.length >= MAX_IMAGES ? (
-                  <p className="text-xs font-semibold text-slate-500">
-                    Maximum {MAX_IMAGES} images reached. Remove one to add another.
-                  </p>
-                ) : (
-                  <>
-                    <p className="text-sm font-bold text-slate-800">
-                      {isDragging ? 'Drop images here!' : 'Click to upload or drag & drop'}
-                    </p>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Upload {MIN_IMAGES}–{MAX_IMAGES} handwritten paper snapshots (PNG, JPG, JPEG)
-                    </p>
-                    <p className="text-[11px] text-emerald-700 font-semibold mt-1.5 bg-emerald-50 px-3 py-0.5 rounded-full border border-emerald-200">
-                      Supports English, Urdu, Arabic &amp; Math handwriting
-                    </p>
-                  </>
-                )}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handleFileInput}
-                  className="hidden"
-                />
-              </div>
-
-              {/* Uploaded Thumbnails */}
-              {images.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wide">
-                    Uploaded Images ({images.length})
-                  </p>
-                  <div className="space-y-2">
-                    {images.map((img, idx) => (
-                      <ImageThumbnailCard
-                        key={img.id}
-                        img={img}
-                        index={idx}
-                        onRemove={() => removeImage(img.id)}
-                        onPreview={() => img.dataUrl && setPreviewImageUrl(img.dataUrl)}
-                        isRunning={isRunning}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Empty State Guidance */}
-              {images.length === 0 && (
-                <div className="text-center text-slate-400 py-2">
-                  <div className="flex items-center justify-center gap-3 text-xs text-slate-500 bg-slate-50 rounded-lg p-3 border border-slate-200">
-                    <ImageIcon className="w-4 h-4 flex-shrink-0" />
-                    <span>Upload 2–3 pages of a handwritten exam paper. Each image = one page or section of the paper.</span>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Metadata Panel */}
-          <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="bg-slate-50 border-b border-slate-200 px-5 py-3">
-              <div className="flex items-center gap-2 text-sm font-bold text-slate-800">
-                <FileText className="w-4 h-4 text-emerald-600" />
-                <span>Paper Metadata</span>
-                <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full ml-auto font-bold border border-amber-200">
-                  Required
-                </span>
-              </div>
-            </div>
-            <div className="p-4 space-y-3">
-              {/* Subject */}
-              <div>
-                <label className="text-[11px] text-slate-500 font-semibold flex items-center gap-1 mb-1">
-                  <BookOpen className="w-3 h-3" /> Subject / مضمون
-                </label>
-                <select
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value as Subject)}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                >
-                  {SUBJECT_OPTIONS.map((s) => (
-                    <option key={s} value={s}>{s}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Grade */}
-              <div>
-                <label className="text-[11px] text-slate-500 font-semibold flex items-center gap-1 mb-1">
-                  <GraduationCap className="w-3 h-3" /> Class / Grade
-                </label>
-                <select
-                  value={grade}
-                  onChange={(e) => setGrade(e.target.value as GradeLevel)}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                >
-                  {GRADE_OPTIONS.map((g) => (
-                    <option key={g} value={g}>{g}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Exam Term */}
-              <div>
-                <label className="text-[11px] text-slate-500 font-semibold flex items-center gap-1 mb-1">
-                  <FileText className="w-3 h-3" /> Exam Term / امتحانی دور
-                </label>
-                <select
-                  value={examTerm}
-                  onChange={(e) => setExamTerm(e.target.value)}
-                  className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                >
-                  <option value="First Term Assessment 2026">First Term 2026</option>
-                  <option value="Mid-Term Examination 2026">Mid-Term 2026</option>
-                  <option value="Final Term Examination 2026">Final Term 2026</option>
-                  <option value="Monthly Class Test">Monthly Class Test</option>
-                  <option value="Send-Up / Pre-Board Examination">Pre-Board / Send-Up</option>
-                </select>
-              </div>
-
-              {/* Marks & Time */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] text-slate-500 font-semibold flex items-center gap-1 mb-1">
-                    <Hash className="w-3 h-3" /> Total Marks
-                  </label>
-                  <input
-                    type="number"
-                    min={5}
-                    max={200}
-                    value={totalMarks}
-                    onChange={(e) => setTotalMarks(parseInt(e.target.value) || 50)}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] text-slate-500 font-semibold flex items-center gap-1 mb-1">
-                    <Clock className="w-3 h-3" /> Time Allowed
-                  </label>
-                  <select
-                    value={timeAllowed}
-                    onChange={(e) => setTimeAllowed(e.target.value)}
-                    className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500 focus:outline-none"
-                  >
-                    <option value="45 Minutes">45 Min</option>
-                    <option value="1 Hour">1 Hour</option>
-                    <option value="1 Hour 30 Minutes">1.5 Hours</option>
-                    <option value="2 Hours">2 Hours</option>
-                    <option value="2 Hours 30 Minutes">2.5 Hours</option>
-                    <option value="3 Hours">3 Hours</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Generate Button */}
-          <button
-            onClick={handleGeneratePaper}
-            disabled={!canGenerate}
-            className={`w-full py-4 px-6 rounded-xl font-black text-sm flex items-center justify-center gap-3 transition-all shadow-md ${
-              canGenerate
-                ? 'bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 text-white hover:shadow-lg hover:scale-[1.01]'
-                : 'bg-slate-200 text-slate-400 cursor-not-allowed'
-            }`}
-          >
-            {isRunning ? (
-              <>
-                <RefreshCw className="w-5 h-5 animate-spin" />
-                <span>Processing Images with OCR...</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-5 h-5 text-amber-300" />
-                <span>
-                  {images.length < MIN_IMAGES
-                    ? `Upload at least ${MIN_IMAGES} images to begin`
-                    : 'Generate Paper from Images'}
-                </span>
-                {canGenerate && <ChevronRight className="w-5 h-5" />}
-              </>
-            )}
-          </button>
-
-          {/* Requirements Note */}
-          {images.length > 0 && images.length < MIN_IMAGES && (
-            <div className="flex items-center gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3">
-              <AlertCircle className="w-4 h-4 flex-shrink-0 text-amber-600" />
-              <span>
-                Please upload at least <strong>{MIN_IMAGES} images</strong> (you have {images.length}). Each image should be a different page or section of the handwritten paper.
-              </span>
-            </div>
-          )}
-
-          {/* Global Error */}
-          {globalError && (
-            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
-              <div className="flex items-start gap-2">
-                <AlertCircle className="w-5 h-5 text-red-600 flex-shrink-0 mt-0.5" />
-                <div>
-                  <p className="text-sm font-bold text-red-800 mb-1">Could Not Generate Paper</p>
-                  <p className="text-xs text-red-700 whitespace-pre-line">{globalError}</p>
-                </div>
-              </div>
-            </div>
-          )}
+        {/* Decorative ambient blobs */}
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+          <div className="absolute -top-40 -left-40 w-[480px] h-[480px] bg-emerald-900/15 rounded-full blur-3xl" />
+          <div className="absolute top-1/3 -right-20 w-72 h-72 bg-blue-900/15 rounded-full blur-3xl" />
+          <div className="absolute bottom-0 left-1/4 w-80 h-80 bg-[#0F284E]/30 rounded-full blur-3xl" />
         </div>
 
-        {/* ── Right: Paper Preview Panel ─────────────────────────────── */}
-        <div className="lg:col-span-7">
-          {hasResult && generatedPaper ? (
-            <div className="space-y-4">
-              {/* Success Banner */}
-              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 bg-emerald-600 rounded-full flex items-center justify-center flex-shrink-0">
-                    <CheckCircle2 className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <p className="font-bold text-emerald-900 text-sm">Paper Successfully Digitized!</p>
-                    <p className="text-xs text-emerald-700">
-                      {totalQCount} question{totalQCount !== 1 ? 's' : ''} extracted across {generatedPaper.sections.length} section{generatedPaper.sections.length !== 1 ? 's' : ''} — ready to export
-                    </p>
-                  </div>
-                </div>
+        <div className="relative z-10 max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6 no-print">
+
+          {/* ─────────────────────────────────────────────────────────────────
+              HEADER
+             ───────────────────────────────────────────────────────────────── */}
+          <header className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-3">
+              {/* Academy crest */}
+              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[#0F284E] to-[#1a3a60] border border-[#2a4a70] flex items-center justify-center shadow-lg flex-shrink-0">
+                <BookOpen className="w-6 h-6 text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-400/80">
+                  The Achievers Islamic Academy
+                </p>
+                <h1 className="text-lg sm:text-xl font-black text-white leading-none tracking-tight">
+                  Handwritten Paper Converter
+                </h1>
+              </div>
+            </div>
+
+            {/* Header export buttons — only when result is ready */}
+            {hasResult && (
+              <div className="flex items-center gap-2 flex-wrap">
                 <button
-                  onClick={resetAll}
-                  className="flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-red-600 border border-slate-200 hover:border-red-300 rounded-lg px-2.5 py-1.5 transition-all"
+                  onClick={onExportDocx}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg transition-all"
                 >
-                  <X className="w-3 h-3" />
-                  <span>Reset</span>
+                  <FileDown className="w-3.5 h-3.5" />
+                  Word (.docx)
+                </button>
+                <button
+                  onClick={onPrint}
+                  className="flex items-center gap-1.5 px-3 py-2 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white text-xs font-bold rounded-xl shadow-lg transition-all"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print / PDF
                 </button>
               </div>
+            )}
+          </header>
 
-              {/* Export Actions */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
-                <p className="text-xs font-bold text-slate-700 uppercase tracking-wide mb-3 flex items-center gap-1.5">
-                  <Layers className="w-3.5 h-3.5 text-emerald-600" />
-                  Export & Print Options
-                </p>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    onClick={onPrint}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all"
-                  >
-                    <Printer className="w-4 h-4 text-emerald-400" />
-                    <span>Print (A4)</span>
-                  </button>
-                  <button
-                    onClick={onExportDocx}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-blue-700 hover:bg-blue-600 text-white rounded-xl text-xs font-bold shadow-sm transition-all"
-                  >
-                    <FileDown className="w-4 h-4" />
-                    <span>Export Word (.docx)</span>
-                  </button>
-                  <button
-                    onClick={onExportPdf}
-                    className="flex items-center gap-2 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded-xl text-xs font-bold shadow-sm transition-all"
-                  >
-                    <Download className="w-4 h-4" />
-                    <span>Download PDF</span>
-                  </button>
-                </div>
-              </div>
-
-              {/* Live Paper Preview */}
-              <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="bg-slate-50 border-b border-slate-200 px-5 py-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <FileText className="w-4 h-4 text-[#0F284E]" />
-                    <span className="font-bold text-sm text-slate-800">Live Paper Preview</span>
-                  </div>
-                  <span className="text-[11px] text-slate-500 bg-white border border-slate-200 rounded px-2 py-0.5">
-                    A4 Format
+          {/* ─────────────────────────────────────────────────────────────────
+              HERO BANNER
+             ───────────────────────────────────────────────────────────────── */}
+          <div className="relative rounded-2xl overflow-hidden bg-gradient-to-r from-[#0F284E] via-[#143562] to-[#0d4a38] border border-white/10 shadow-2xl p-6 sm:p-8">
+            <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent pointer-events-none" />
+            <div className="relative flex flex-col md:flex-row md:items-center gap-6 justify-between">
+              <div className="max-w-xl">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-400 text-slate-900 uppercase tracking-wider">
+                    AI Vision OCR
+                  </span>
+                  <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/20 border border-emerald-500/30 text-emerald-300 uppercase tracking-wider">
+                    Zero Dummy Data
                   </span>
                 </div>
-
-                {/* Printable Paper */}
-                <div className="p-4 bg-slate-100/60">
-                  <div
-                    id="achievers-printable-paper"
-                    className="bg-white shadow-sm mx-auto p-8 border border-slate-200"
-                    style={{
-                      width: '210mm',
-                      minHeight: '297mm',
-                      maxWidth: '100%',
-                      boxSizing: 'border-box',
-                    }}
-                  >
-                    {/* Academy Letterhead */}
-                    <AcademyLetterhead paper={generatedPaper} isUrduOrArabic={isUrduOrArabic} />
-
-                    {/* General Instructions */}
-                    {generatedPaper.instructions && generatedPaper.instructions.length > 0 && (
-                      <div className="mb-3 border border-slate-300 rounded bg-slate-50/80 p-2">
-                        <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wide mb-1">
-                          General Instructions:
-                        </p>
-                        <ol className="list-decimal list-inside text-xs text-slate-700 space-y-0.5">
-                          {generatedPaper.instructions.map((ins, i) => (
-                            <li key={i}>{ins}</li>
-                          ))}
-                        </ol>
-                      </div>
-                    )}
-
-                    {/* Sections & Questions */}
-                    {generatedPaper.sections.map((section) => (
-                      <div key={section.id} className="mb-5">
-                        {/* Section Header */}
-                        <div className="bg-[#0F284E] text-white px-3 py-1.5 rounded-t-sm mb-2 flex items-center justify-between">
-                          <span className="font-bold text-sm">{section.sectionTitle}</span>
-                          <span className="text-xs font-semibold text-emerald-300">
-                            Marks: {section.totalMarks}
-                          </span>
-                        </div>
-                        {section.instructions && (
-                          <p className="text-[11px] text-slate-600 italic mb-2 px-1">
-                            {section.instructions}
-                          </p>
-                        )}
-                        <div className="space-y-2">
-                          {section.questions.map((question, qIdx) => (
-                            <QuestionItem
-                              key={question.id}
-                              question={question}
-                              paperLanguage={generatedPaper.language}
-                              fontSize="standard"
-                              index={qIdx}
-                              onEdit={() => {}}
-                              onDelete={() => {}}
-                              onDuplicate={() => {}}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-
-                    {/* Paper Footer */}
-                    <div className="mt-6 pt-3 border-t border-slate-300 text-center text-[11px] text-slate-500">
-                      <p className="font-semibold">{generatedPaper.academyName} • {generatedPaper.examTerm}</p>
-                      <p>{generatedPaper.subject} — {generatedPaper.gradeLevel}</p>
-                    </div>
-                  </div>
-                </div>
+                <h2 className="text-2xl sm:text-3xl font-black text-white tracking-tight leading-tight">
+                  Upload → Extract → Export
+                </h2>
+                <p className="text-sm text-slate-300 mt-2 leading-relaxed">
+                  Upload 1–4 snapshots of your handwritten exam paper (front &amp; back pages). Gemini AI or
+                  Tesseract OCR extracts the exact text and structures it under the official Academy
+                  letterhead — ready for <strong className="text-amber-300">Word</strong> or{' '}
+                  <strong className="text-amber-300">PDF</strong> in one click.
+                </p>
               </div>
-            </div>
-          ) : (
-            /* Empty State */
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 h-full min-h-[500px] flex flex-col items-center justify-center p-8 text-center">
-              <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-[#0F284E] to-[#1a3261] border-2 border-amber-400/60 flex items-center justify-center mb-5 shadow-md">
-                <ScanText className="w-10 h-10 text-amber-300" />
-              </div>
-              <h3 className="text-lg font-black text-slate-800 mb-2">
-                Paper Preview
-              </h3>
-              <p className="text-sm text-slate-500 max-w-sm">
-                Upload {MIN_IMAGES}–{MAX_IMAGES} handwritten exam paper images on the left, fill in the metadata, then click{' '}
-                <span className="font-bold text-emerald-700">"Generate Paper from Images"</span>{' '}
-                to digitize and format them here.
-              </p>
-              <div className="mt-6 grid grid-cols-3 gap-3 w-full max-w-sm">
-                {[1, 2, 3].map((n) => (
-                  <div
-                    key={n}
-                    className="border-2 border-dashed border-slate-200 rounded-xl p-4 flex flex-col items-center gap-2 text-slate-300"
-                  >
-                    <ImageIcon className="w-6 h-6" />
-                    <span className="text-xs font-semibold">Image {n}</span>
+
+              {/* Step indicators */}
+              <div className="flex md:flex-col gap-3 text-xs text-slate-300 bg-white/5 rounded-xl p-4 border border-white/10 flex-shrink-0">
+                {[
+                  { n: '1', c: 'bg-amber-400 text-slate-900', t: 'Upload 1–4 paper images' },
+                  { n: '2', c: 'bg-sky-400 text-slate-900', t: 'Set subject & metadata' },
+                  { n: '3', c: 'bg-emerald-400 text-slate-900', t: 'Extract & generate paper' },
+                  { n: '4', c: 'bg-rose-400 text-slate-900', t: 'Download Word or Print PDF' },
+                ].map(({ n, c, t }) => (
+                  <div key={n} className="flex items-center gap-2">
+                    <span className={`w-5 h-5 rounded-full ${c} font-black text-[11px] flex items-center justify-center flex-shrink-0`}>{n}</span>
+                    <span>{t}</span>
                   </div>
                 ))}
               </div>
-              <p className="text-[11px] text-slate-400 mt-4">
-                The digitized paper will appear here with the official Academy letterhead,<br />
-                question sections, and one-click export buttons.
-              </p>
             </div>
-          )}
-        </div>
-      </div>
-
-      {/* ─── Image Preview Modal ─────────────────────────────────────── */}
-      {previewImageUrl && (
-        <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
-          onClick={() => setPreviewImageUrl(null)}
-        >
-          <div
-            className="relative max-w-4xl max-h-[90vh] bg-white rounded-2xl overflow-hidden shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              onClick={() => setPreviewImageUrl(null)}
-              className="absolute top-3 right-3 z-10 w-8 h-8 bg-black/60 hover:bg-black text-white rounded-full flex items-center justify-center transition-colors"
-            >
-              <X className="w-4 h-4" />
-            </button>
-            <img
-              src={previewImageUrl}
-              alt="Full preview"
-              className="max-w-full max-h-[85vh] object-contain"
-            />
           </div>
-        </div>
-      )}
-    </div>
-  );
-};
 
-// ---------------------------------------------------------------------------
-// Sub-component: Image Thumbnail Card
-// ---------------------------------------------------------------------------
+          {/* ─────────────────────────────────────────────────────────────────
+              GEMINI API KEY PANEL
+             ───────────────────────────────────────────────────────────────── */}
+          <GeminiKeyPanel
+            apiKey={geminiKey}
+            keyStatus={keyStatus}
+            onKeyChange={handleKeyChange}
+            onValidate={handleValidateKey}
+          />
 
-interface ImageThumbnailCardProps {
-  img: UploadedImage;
-  index: number;
-  onRemove: () => void;
-  onPreview: () => void;
-  isRunning: boolean;
-}
-
-const ImageThumbnailCard: React.FC<ImageThumbnailCardProps> = ({
-  img,
-  index,
-  onRemove,
-  onPreview,
-  isRunning,
-}) => {
-  const statusColor = {
-    pending: 'bg-slate-100 border-slate-200',
-    processing: 'bg-amber-50 border-amber-300',
-    done: 'bg-emerald-50 border-emerald-300',
-    error: 'bg-red-50 border-red-300',
-  }[img.status];
-
-  const statusIcon = {
-    pending: <span className="w-4 h-4 rounded-full bg-slate-300 flex-shrink-0" />,
-    processing: <RefreshCw className="w-4 h-4 text-amber-600 animate-spin flex-shrink-0" />,
-    done: <CheckCircle2 className="w-4 h-4 text-emerald-600 flex-shrink-0" />,
-    error: <AlertCircle className="w-4 h-4 text-red-600 flex-shrink-0" />,
-  }[img.status];
-
-  return (
-    <div className={`rounded-xl border p-3 transition-all ${statusColor}`}>
-      <div className="flex items-center gap-3">
-        {/* Thumbnail */}
-        <div
-          className="w-14 h-14 rounded-lg overflow-hidden border border-slate-200 flex-shrink-0 bg-slate-100 cursor-pointer relative group"
-          onClick={onPreview}
-        >
-          {img.dataUrl ? (
-            <>
-              <img
-                src={img.dataUrl}
-                alt={img.name}
-                className="w-full h-full object-cover"
-              />
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center">
-                <ZoomIn className="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+          {/* ─────────────────────────────────────────────────────────────────
+              UPLOAD ZONE
+             ───────────────────────────────────────────────────────────────── */}
+          <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            {/* Panel header */}
+            <div className="bg-gradient-to-r from-slate-800/80 to-slate-900/80 px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <UploadCloud className="w-4 h-4 text-sky-400" />
+                <span className="font-bold text-sm text-white">Upload Handwritten Paper Images</span>
+                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full ${images.length >= MAX_IMAGES ? 'bg-amber-500 text-slate-900' : 'bg-slate-700 text-slate-400'}`}>
+                  {images.length}/{MAX_IMAGES}
+                </span>
               </div>
-            </>
-          ) : (
-            <div className="w-full h-full flex items-center justify-center">
-              <ImageIcon className="w-6 h-6 text-slate-400" />
+              {images.length > 0 && (
+                <button
+                  onClick={resetAll}
+                  className="flex items-center gap-1 text-xs text-slate-500 hover:text-red-400 transition-colors"
+                >
+                  <RefreshCw className="w-3 h-3" />
+                  Clear all
+                </button>
+              )}
             </div>
-          )}
-        </div>
 
-        {/* Info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 mb-0.5">
-            <span className="text-[10px] font-black text-slate-500 bg-slate-100 rounded px-1.5 py-0.5 border border-slate-200">
-              #{index + 1}
-            </span>
-            <span className="text-xs font-semibold text-slate-800 truncate">{img.name}</span>
+            <div className="p-5 space-y-4">
+              {/* Drop zone */}
+              {images.length < MAX_IMAGES && (
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  onClick={() => fileInputRef.current?.click()}
+                  className={`
+                    relative border-2 border-dashed rounded-xl p-8 text-center cursor-pointer
+                    transition-all duration-300 select-none
+                    ${isDragging
+                      ? 'border-sky-400 bg-sky-900/20 scale-[1.01] shadow-lg shadow-sky-900/20'
+                      : 'border-slate-700 hover:border-slate-500 hover:bg-slate-800/40 bg-slate-800/20'
+                    }
+                  `}
+                >
+                  {isDragging && (
+                    <div className="absolute inset-0 rounded-xl bg-sky-500/5 animate-pulse" />
+                  )}
+                  <div className="relative">
+                    <div className={`mx-auto w-14 h-14 rounded-2xl flex items-center justify-center mb-3 transition-colors ${isDragging ? 'bg-sky-500/20 border-sky-500' : 'bg-slate-800 border-slate-700'} border-2`}>
+                      <UploadCloud className={`w-7 h-7 ${isDragging ? 'text-sky-400' : 'text-slate-500'} transition-colors`} />
+                    </div>
+                    <p className="text-sm font-bold text-slate-200">
+                      {isDragging ? 'Drop your paper images here' : 'Drag & drop or click to select images'}
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">
+                      JPG, PNG, HEIC, WEBP · Front page, back page, up to {MAX_IMAGES} images
+                    </p>
+                    <div className="mt-3 flex items-center justify-center gap-3 flex-wrap">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600/15 border border-amber-600/30 rounded-lg text-amber-400 text-xs font-semibold">
+                        <Zap className="w-3.5 h-3.5" />
+                        Gemini Vision AI
+                      </div>
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-sky-600/15 border border-sky-600/30 rounded-lg text-sky-400 text-xs font-semibold">
+                        <ScanLine className="w-3.5 h-3.5" />
+                        Tesseract OCR fallback
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Thumbnail grid */}
+              {images.length > 0 && (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {images.map((img) => (
+                    <ImageCard
+                      key={img.id}
+                      img={img}
+                      onRemove={removeImage}
+                      onPreview={(url) => setPreviewUrl(url)}
+                    />
+                  ))}
+                  {/* Add more slot */}
+                  {images.length < MAX_IMAGES && (
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="aspect-[3/4] rounded-xl border-2 border-dashed border-slate-700 hover:border-slate-500 bg-slate-800/30 hover:bg-slate-800/60 flex flex-col items-center justify-center gap-2 transition-all group cursor-pointer"
+                    >
+                      <div className="w-9 h-9 rounded-xl bg-slate-700/50 group-hover:bg-slate-700 flex items-center justify-center transition-colors">
+                        <UploadCloud className="w-4.5 h-4.5 text-slate-500 group-hover:text-slate-400" />
+                      </div>
+                      <span className="text-[11px] text-slate-600 group-hover:text-slate-400 font-semibold">
+                        {PAGE_LABELS[images.length] || 'Add page'}
+                      </span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
-          <div className="flex items-center gap-1.5">
-            {statusIcon}
-            <span className="text-[11px] text-slate-600">
-              {img.status === 'pending' && `${img.sizeKB} KB — Ready`}
-              {img.status === 'processing' && `OCR: ${img.progress ?? 0}%`}
-              {img.status === 'done' && (
-                <span className="text-emerald-700">
-                  Done {img.ocrConfidence ? `(${img.ocrConfidence.toFixed(0)}% conf.)` : ''}
+
+          {/* ─────────────────────────────────────────────────────────────────
+              METADATA PANEL
+             ───────────────────────────────────────────────────────────────── */}
+          <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="bg-gradient-to-r from-slate-800/80 to-slate-900/80 px-5 py-3.5 border-b border-slate-800 flex items-center gap-2">
+              <FileText className="w-4 h-4 text-emerald-400" />
+              <span className="font-bold text-sm text-white">Paper Metadata</span>
+              <span className="text-[10px] text-slate-500 ml-1">· Applied to the official Academy letterhead</span>
+            </div>
+            <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              <SelectField
+                icon={<BookOpen className="w-3 h-3" />}
+                label="Subject"
+                value={subject}
+                onChange={(v) => setSubject(v as Subject)}
+                options={SUBJECT_OPTIONS}
+              />
+              <SelectField
+                icon={<GraduationCap className="w-3 h-3" />}
+                label="Grade / Class"
+                value={grade}
+                onChange={(v) => setGrade(v as GradeLevel)}
+                options={GRADE_OPTIONS}
+              />
+              <div className="flex flex-col gap-1.5">
+                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <Hash className="w-3 h-3" />
+                  Total Marks
+                </label>
+                <input
+                  type="number"
+                  min={5}
+                  max={200}
+                  value={totalMarks}
+                  onChange={(e) => setTotalMarks(Number(e.target.value))}
+                  className="bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 outline-none transition-all"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <Clock className="w-3 h-3" />
+                  Time Allowed
+                </label>
+                <input
+                  type="text"
+                  value={timeAllowed}
+                  onChange={(e) => setTimeAllowed(e.target.value)}
+                  placeholder="e.g. 2 Hours 30 Minutes"
+                  className="bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 outline-none transition-all placeholder:text-slate-600"
+                />
+              </div>
+            </div>
+            {/* Exam term row */}
+            <div className="px-5 pb-5">
+              <div className="flex flex-col gap-1.5">
+                <label className="flex items-center gap-1.5 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  <FileText className="w-3 h-3" />
+                  Examination Title / Term
+                </label>
+                <input
+                  type="text"
+                  value={examTerm}
+                  onChange={(e) => setExamTerm(e.target.value)}
+                  placeholder="e.g. Mid-Term Examination 2026"
+                  className="bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 outline-none transition-all placeholder:text-slate-600 max-w-sm"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* ─────────────────────────────────────────────────────────────────
+              CONVERT BUTTON
+             ───────────────────────────────────────────────────────────────── */}
+          <div className="flex flex-col items-center gap-4">
+            <button
+              onClick={handleConvert}
+              disabled={!canConvert}
+              className={`
+                relative group flex items-center gap-3 px-10 py-4 rounded-2xl font-black text-base
+                shadow-2xl transition-all duration-300 select-none
+                ${canConvert
+                  ? 'bg-gradient-to-r from-emerald-600 via-emerald-500 to-teal-500 hover:from-emerald-500 hover:via-emerald-400 hover:to-teal-400 text-white hover:shadow-emerald-900/40 hover:shadow-2xl hover:-translate-y-0.5 active:translate-y-0 cursor-pointer'
+                  : 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-700'
+                }
+              `}
+            >
+              {isRunning ? (
+                <>
+                  <svg className="w-5 h-5 animate-spin text-white" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span>
+                    Extracting {processingImg ? `${processingImg.label}` : '…'}
+                  </span>
+                </>
+              ) : hasResult ? (
+                <>
+                  <RefreshCw className="w-5 h-5" />
+                  <span>Re-Convert Paper</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-5 h-5 group-hover:rotate-12 transition-transform" />
+                  <span>
+                    {keyStatus === 'valid' ? '✦ AI Extract & Generate Official Paper' : 'Extract & Generate Official Paper'}
+                  </span>
+                </>
+              )}
+              {/* Shimmer */}
+              {canConvert && !isRunning && (
+                <span className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
+                  <span className="absolute inset-0 bg-gradient-to-r from-transparent via-white/10 to-transparent -skew-x-12 -translate-x-full group-hover:translate-x-full transition-transform duration-700" />
                 </span>
               )}
-              {img.status === 'error' && (
-                <span className="text-red-700 text-[10px]">{img.errorMsg || 'OCR Failed'}</span>
-              )}
-            </span>
+            </button>
+
+            {/* Progress bars */}
+            {isRunning && (
+              <div className="w-full max-w-md space-y-2">
+                {images.map((img) => (
+                  <div key={img.id} className="flex items-center gap-3">
+                    <span className="text-[11px] text-slate-400 w-20 font-bold truncate">{img.label}</span>
+                    <div className="flex-1 bg-slate-800 rounded-full h-2 overflow-hidden">
+                      <div
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          img.status === 'done' ? 'bg-emerald-500' :
+                          img.status === 'error' ? 'bg-red-500' :
+                          img.status === 'processing' ? 'bg-blue-500 animate-pulse' : 'bg-slate-700'
+                        }`}
+                        style={{ width: `${img.progress ?? 0}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-slate-500 w-8 text-right font-mono">{img.progress ?? 0}%</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {images.length === 0 && !isRunning && (
+              <p className="text-xs text-slate-600">Upload at least one image to begin</p>
+            )}
           </div>
 
-          {/* Progress bar */}
-          {img.status === 'processing' && (
-            <div className="mt-1.5 w-full bg-amber-100 rounded-full h-1.5 overflow-hidden">
-              <div
-                className="bg-amber-500 h-1.5 rounded-full transition-all duration-300"
-                style={{ width: `${img.progress ?? 0}%` }}
-              />
+          {/* ─────────────────────────────────────────────────────────────────
+              ERROR DISPLAY
+             ───────────────────────────────────────────────────────────────── */}
+          {globalError && (
+            <div className="flex gap-3 p-4 bg-red-950/40 border border-red-800/60 rounded-xl">
+              <AlertTriangle className="w-5 h-5 text-red-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-bold text-red-300">Extraction Issue</p>
+                <p className="text-xs text-red-400 mt-0.5 whitespace-pre-line">{globalError}</p>
+              </div>
             </div>
           )}
-        </div>
 
-        {/* Remove Button */}
-        {!isRunning && (
-          <button
-            onClick={onRemove}
-            title="Remove this image"
-            className="w-7 h-7 rounded-lg bg-white border border-slate-200 hover:bg-red-50 hover:border-red-300 flex items-center justify-center transition-colors flex-shrink-0"
-          >
-            <X className="w-3.5 h-3.5 text-slate-400 hover:text-red-600" />
-          </button>
+          {/* ─────────────────────────────────────────────────────────────────
+              SUCCESS BAR
+             ───────────────────────────────────────────────────────────────── */}
+          {hasResult && generatedPaper && (
+            <div className="flex items-center justify-between gap-4 p-4 bg-emerald-950/40 border border-emerald-800/50 rounded-xl flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+                </div>
+                <div>
+                  <p className="text-sm font-black text-emerald-300">Paper generated successfully!</p>
+                  <p className="text-xs text-emerald-600">
+                    {generatedPaper.sections.length} section{generatedPaper.sections.length !== 1 ? 's' : ''} · {totalQCount} question{totalQCount !== 1 ? 's' : ''} · {generatedPaper.totalMarks} marks
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={onExportDocx}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md transition-all"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  Download Word (.docx)
+                </button>
+                <button
+                  onClick={onPrint}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-500 active:scale-95 text-white text-xs font-bold rounded-xl shadow-md transition-all"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print / Save PDF (A4)
+                </button>
+              </div>
+            </div>
+          )}
+        </div>{/* end .no-print wrapper */}
+
+        {/* ══════════════════════════════════════════════════════════════════
+            A4 PAPER PREVIEW
+           ══════════════════════════════════════════════════════════════════ */}
+        {hasResult && generatedPaper && (
+          <div className="no-print max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
+            {/* Preview label */}
+            <div className="flex items-center justify-between mb-4 px-1">
+              <div className="flex items-center gap-2">
+                <div className="w-1 h-5 bg-emerald-500 rounded-full" />
+                <span className="font-bold text-sm text-white">Live Paper Preview</span>
+                <span className="text-xs text-slate-600">· A4 (210mm × 297mm)</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={onExportDocx}
+                  className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 font-bold transition-colors"
+                >
+                  <FileDown className="w-3.5 h-3.5" />
+                  Word
+                </button>
+                <span className="text-slate-700">·</span>
+                <button
+                  onClick={onPrint}
+                  className="flex items-center gap-1.5 text-xs text-rose-400 hover:text-rose-300 font-bold transition-colors"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                  Print / PDF
+                </button>
+              </div>
+            </div>
+
+            {/* Paper wrapper */}
+            <div className="bg-slate-800/40 rounded-2xl p-4 border border-slate-800 shadow-xl overflow-auto">
+              {/* A4 sheet */}
+              <div
+                id="achievers-printable-paper"
+                className="bg-white mx-auto shadow-2xl"
+                style={{
+                  width: '210mm',
+                  minHeight: '297mm',
+                  maxWidth: '100%',
+                  padding: '20mm',
+                  boxSizing: 'border-box',
+                  fontFamily: 'Arial, sans-serif',
+                  fontSize: '11pt',
+                  color: '#1a1a1a',
+                }}
+              >
+                {/* Academy Letterhead */}
+                <AcademyLetterhead paper={generatedPaper} isUrduOrArabic={isUrduOrArabic} />
+
+                {/* General Instructions */}
+                {generatedPaper.instructions && generatedPaper.instructions.length > 0 && (
+                  <div className="mb-4 border border-slate-300 rounded bg-slate-50 p-2.5" style={{ borderColor: '#cbd5e1' }}>
+                    <p className="text-[11px] font-bold text-slate-700 uppercase tracking-wide mb-1.5" style={{ color: '#334155' }}>
+                      General Instructions:
+                    </p>
+                    <ol className="list-decimal list-inside text-xs text-slate-700 space-y-0.5" style={{ color: '#334155' }}>
+                      {generatedPaper.instructions.map((ins, i) => (
+                        <li key={i}>{ins}</li>
+                      ))}
+                    </ol>
+                  </div>
+                )}
+
+                {/* Sections */}
+                {generatedPaper.sections.length === 0 ? (
+                  /* Raw text fallback when no sections detected */
+                  <div className="text-sm text-slate-700" style={{ lineHeight: 1.8 }}>
+                    <p className="font-bold text-slate-500 mb-2 text-xs uppercase tracking-wide">Extracted Content:</p>
+                    {images
+                      .filter((i) => i.ocrText)
+                      .map((i) => (
+                        <div key={i.id} className="mb-6">
+                          <p className="font-bold text-xs text-slate-400 mb-1 uppercase">{i.label}</p>
+                          <p className="whitespace-pre-wrap" dir={isUrduOrArabic ? 'rtl' : 'ltr'}
+                            style={{ fontFamily: isUrduOrArabic ? "'Noto Nastaliq Urdu', serif" : 'inherit', lineHeight: isUrduOrArabic ? 2.4 : 1.8 }}>
+                            {i.ocrText}
+                          </p>
+                        </div>
+                      ))}
+                  </div>
+                ) : (
+                  generatedPaper.sections.map((section) => (
+                    <div key={section.id} className="mb-6">
+                      {/* Section header */}
+                      <div
+                        className="py-1.5 px-3 mb-3 rounded"
+                        style={{ backgroundColor: '#0F284E', color: '#ffffff' }}
+                      >
+                        <div className="flex items-center justify-between">
+                          <h2 className="font-black text-sm" style={{ color: '#ffffff' }}>
+                            {section.sectionTitle}
+                          </h2>
+                          <span className="font-bold text-xs" style={{ color: '#6ee7b7' }}>
+                            [{section.totalMarks} Marks]
+                          </span>
+                        </div>
+                        {section.instructions && (
+                          <p className="text-[10px] mt-0.5 italic" style={{ color: '#93c5fd' }}>
+                            {section.instructions}
+                          </p>
+                        )}
+                      </div>
+
+                      {/* Questions */}
+                      {section.questions.map((q, qi) => (
+                        <div
+                          key={q.id}
+                          className="mb-3 pb-2"
+                          style={{ borderBottom: qi < section.questions.length - 1 ? '1px solid #f1f5f9' : 'none' }}
+                        >
+                          <div className="flex items-start gap-2">
+                            <span
+                              className="font-black text-[11px] flex-shrink-0 mt-0.5"
+                              style={{ color: '#0F284E', minWidth: '24px' }}
+                            >
+                              Q{q.questionNumber || qi + 1}.
+                            </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <p
+                                  className="text-sm leading-relaxed"
+                                  dir={isUrduOrArabic ? 'rtl' : 'ltr'}
+                                  style={{
+                                    fontFamily: isUrduOrArabic
+                                      ? "'Jameel Noori Nastaleeq', 'Noto Nastaliq Urdu', serif"
+                                      : 'Arial, sans-serif',
+                                    lineHeight: isUrduOrArabic ? '2.4' : '1.5',
+                                    color: '#1e293b',
+                                  }}
+                                >
+                                  {q.text || ''}
+                                </p>
+                                <span
+                                  className="font-bold text-[10px] flex-shrink-0 px-1.5 py-0.5 rounded text-white"
+                                  style={{ backgroundColor: '#059669', whiteSpace: 'nowrap' }}
+                                >
+                                  {q.marks} {q.marks === 1 ? 'Mark' : 'Marks'}
+                                </span>
+                              </div>
+
+                              {/* MCQ Options */}
+                              {q.type === 'mcq' && q.options && q.options.length > 0 && (
+                                <div className="mt-1.5 flex flex-wrap gap-x-6 gap-y-1">
+                                  {q.options.filter(o => o.text).map((opt) => (
+                                    <span key={opt.id} className="text-xs" style={{ color: '#334155' }}>
+                                      <strong style={{ color: '#0F284E' }}>({opt.label})</strong>{' '}
+                                      {opt.text}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Fill blank answer line */}
+                              {q.type === 'fill_in_the_blank' && (
+                                <div className="mt-1.5 border-b border-slate-300" style={{ minHeight: '20px', borderColor: '#cbd5e1' }} />
+                              )}
+
+                              {/* Short answer lines */}
+                              {q.type === 'short' && (
+                                <div className="mt-2 space-y-2">
+                                  {[...Array(3)].map((_, li) => (
+                                    <div key={li} className="border-b" style={{ height: '20px', borderColor: '#e2e8f0' }} />
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Long answer lines */}
+                              {q.type === 'long' && (
+                                <div className="mt-2 space-y-2">
+                                  {[...Array(6)].map((_, li) => (
+                                    <div key={li} className="border-b" style={{ height: '20px', borderColor: '#e2e8f0' }} />
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Vocabulary column match */}
+                              {q.type === 'vocabulary' && q.columnMatchLeft && q.columnMatchRight && (
+                                <div className="mt-2 grid grid-cols-2 gap-x-8 text-xs" style={{ color: '#334155' }}>
+                                  <div>
+                                    {q.columnMatchLeft.map((item, li) => (
+                                      <p key={li} className="py-0.5 border-b" style={{ borderColor: '#e2e8f0' }}>
+                                        {li + 1}. {item}
+                                      </p>
+                                    ))}
+                                  </div>
+                                  <div>
+                                    {q.columnMatchRight.map((item, li) => (
+                                      <p key={li} className="py-0.5 border-b text-right" style={{ borderColor: '#e2e8f0' }}>
+                                        {item}
+                                      </p>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ))
+                )}
+
+                {/* Footer */}
+                <div className="mt-8 pt-3 text-center" style={{ borderTop: '2px solid #0F284E' }}>
+                  <p className="font-black text-xs tracking-widest" style={{ color: '#0F284E' }}>
+                    *** ALL THE BEST — THE ACHIEVERS ISLAMIC ACADEMY ***
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
+
+        {/* App footer */}
+        <footer className="no-print border-t border-slate-800/60 py-5 text-center">
+          <p className="text-[11px] text-slate-600">
+            <span className="font-bold text-slate-500">THE ACHIEVERS ISLAMIC ACADEMY</span>
+            {' '}· Handwritten Paper Converter · Gemini Vision AI + Tesseract OCR
+          </p>
+        </footer>
       </div>
-    </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          PRINT STYLES
+         ══════════════════════════════════════════════════════════════════════ */}
+      <style>{`
+        @media print {
+          @page {
+            size: A4 portrait !important;
+            margin: 0 !important;
+          }
+          html, body {
+            width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            background: #ffffff !important;
+          }
+          .no-print,
+          header,
+          footer,
+          nav {
+            display: none !important;
+          }
+          #achievers-printable-paper {
+            display: block !important;
+            width: 210mm !important;
+            min-width: 210mm !important;
+            max-width: 210mm !important;
+            min-height: 297mm !important;
+            padding: 20mm !important;
+            box-sizing: border-box !important;
+            margin: 0 auto !important;
+            background: #ffffff !important;
+            border: none !important;
+            box-shadow: none !important;
+            color: #1a1a1a !important;
+          }
+          #root, #root > div, main, main > div {
+            width: 100% !important;
+            max-width: 100% !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            display: block !important;
+            background: transparent !important;
+          }
+        }
+      `}</style>
+    </>
   );
 };
