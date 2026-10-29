@@ -316,6 +316,8 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
   const totalQCount = generatedPaper
     ? generatedPaper.sections.reduce((sum, s) => sum + s.questions.length, 0)
     : 0;
+  const _lang = generatedPaper?.language ?? getAutoLanguage(subject);
+  const isUrduOrArabic = _lang === 'ur' || _lang === 'ar';
 
   // ── Render ───────────────────────────────────────────────────────────────
 
