@@ -99,15 +99,17 @@ function getAutoLanguage(subject: Subject): Language {
 
 // ---------------------------------------------------------------------------
 // Sub-component: Gemini API Key Panel
-// ---------------------------------------------------------------------------
-
-const GeminiKeyPanel: React.FC<{
+// ------const GeminiKeyPanel: React.FC<{
   apiKey: string;
   keyStatus: 'idle' | 'validating' | 'valid' | 'invalid';
   onKeyChange: (k: string) => void;
   onValidate: () => void;
-}> = ({ apiKey, keyStatus, onKeyChange, onValidate }) => {
+  onForceEnable: () => void;
+}> = ({ apiKey, keyStatus, onKeyChange, onValidate, onForceEnable }) => {
   const [showKey, setShowKey] = useState(false);
+
+  // A key that looks like a real Gemini key (AIza... prefix, ≥35 chars)
+  const looksValid = apiKey.trim().startsWith('AIza') && apiKey.trim().length >= 35;
 
   return (
     <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
@@ -123,9 +125,19 @@ const GeminiKeyPanel: React.FC<{
             <CheckCircle2 className="w-3 h-3" /> Gemini Active
           </span>
         )}
-        {keyStatus === 'idle' && (
+        {keyStatus === 'idle' && looksValid && (
+          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-400 bg-amber-900/20 border border-amber-800/50 px-2.5 py-1 rounded-full">
+            <Zap className="w-3 h-3" /> Key ready
+          </span>
+        )}
+        {keyStatus === 'idle' && !looksValid && (
           <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 bg-slate-800/60 border border-slate-700 px-2.5 py-1 rounded-full">
             <Cpu className="w-3 h-3" /> Tesseract fallback
+          </span>
+        )}
+        {keyStatus === 'invalid' && (
+          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-orange-400 bg-orange-900/20 border border-orange-800/40 px-2.5 py-1 rounded-full">
+            <AlertCircle className="w-3 h-3" /> Verify failed
           </span>
         )}
       </div>
@@ -141,8 +153,14 @@ const GeminiKeyPanel: React.FC<{
               type={showKey ? 'text' : 'password'}
               value={apiKey}
               onChange={(e) => onKeyChange(e.target.value)}
-              placeholder="Enter your Google AI (Gemini) API key — AIzaSy..."
-              className="w-full bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 text-slate-200 text-sm rounded-xl pl-10 pr-10 py-2.5 outline-none transition-all placeholder:text-slate-600 font-mono"
+              placeholder="Paste your Google AI (Gemini) API key — AIzaSy..."
+              className={`w-full bg-slate-800/80 border hover:border-slate-500 focus:ring-2 text-slate-200 text-sm rounded-xl pl-10 pr-10 py-2.5 outline-none transition-all placeholder:text-slate-600 font-mono ${
+                keyStatus === 'valid'
+                  ? 'border-emerald-600 focus:border-emerald-500 focus:ring-emerald-500/20'
+                  : keyStatus === 'invalid'
+                  ? 'border-orange-700 focus:border-amber-500 focus:ring-amber-500/20'
+                  : 'border-slate-700 focus:border-amber-500 focus:ring-amber-500/20'
+              }`}
             />
             <button
               type="button"
@@ -153,27 +171,40 @@ const GeminiKeyPanel: React.FC<{
             </button>
           </div>
 
-          {/* Validate button */}
-          <button
-            onClick={onValidate}
-            disabled={!apiKey.trim() || keyStatus === 'validating'}
-            className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-all active:scale-95 whitespace-nowrap"
-          >
-            {keyStatus === 'validating' ? (
-              <>
-                <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                </svg>
-                Verifying…
-              </>
-            ) : (
-              <>
-                <Zap className="w-4 h-4" />
-                Verify & Enable
-              </>
+          {/* Action buttons */}
+          <div className="flex gap-2">
+            <button
+              onClick={onValidate}
+              disabled={!apiKey.trim() || keyStatus === 'validating'}
+              className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-all active:scale-95 whitespace-nowrap"
+            >
+              {keyStatus === 'validating' ? (
+                <>
+                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  Verifying…
+                </>
+              ) : (
+                <>
+                  <Zap className="w-4 h-4" />
+                  Verify &amp; Enable
+                </>
+              )}
+            </button>
+
+            {/* Try-Anyway button shown when key was marked invalid */}
+            {keyStatus === 'invalid' && apiKey.trim().length >= 10 && (
+              <button
+                onClick={onForceEnable}
+                className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-semibold rounded-xl transition-all active:scale-95 whitespace-nowrap"
+                title="Ignore validation result and try OCR anyway"
+              >
+                Try Anyway
+              </button>
             )}
-          </button>
+          </div>
         </div>
 
         {/* Status messages */}
@@ -183,10 +214,17 @@ const GeminiKeyPanel: React.FC<{
             Gemini Vision enabled — uploads will use AI for superior handwriting extraction.
           </p>
         )}
+        {keyStatus === 'idle' && looksValid && (
+          <p className="mt-2 text-xs text-amber-400/80 flex items-center gap-1.5">
+            <Zap className="w-3.5 h-3.5" />
+            Key detected and ready. Click “Verify &amp; Enable” to confirm, or just click “Extract” — Gemini will be used automatically.
+          </p>
+        )}
         {keyStatus === 'invalid' && (
-          <p className="mt-2 text-xs text-red-400 flex items-center gap-1.5">
+          <p className="mt-2 text-xs text-orange-400 flex items-center gap-1.5">
             <AlertCircle className="w-3.5 h-3.5" />
-            Key invalid. Check it at <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="underline hover:text-red-300">aistudio.google.com</a> — falling back to Tesseract.
+            Verification returned an error. The key may still work — click “Try Anyway” to proceed with OCR, or get a new key at{' '}
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="underline hover:text-orange-300">aistudio.google.com</a>.
           </p>
         )}
         {keyStatus === 'idle' && !apiKey && (
@@ -197,6 +235,12 @@ const GeminiKeyPanel: React.FC<{
               aistudio.google.com
             </a>
             . Without a key, Tesseract OCR runs locally.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+};seract OCR runs locally.
           </p>
         )}
       </div>

@@ -279,7 +279,8 @@ export async function extractStructuredExamData(
         topK: 1,
         topP: 0.9,
         maxOutputTokens: 8192,
-        responseMimeType: 'application/json',
+        // NOTE: responseMimeType is intentionally omitted — not supported by all
+        // Gemini API regions/versions and causes silent 400 failures.
       },
     };
 
@@ -386,6 +387,18 @@ export async function extractStructuredExamData(
 // Exported: Validate a Gemini API key by making a tiny test call
 // ---------------------------------------------------------------------------
 
+/**
+ * Validate a Gemini API key.
+ *
+ * Leniency rules:
+ *  - HTTP 200: definitely valid
+ *  - HTTP 429 (quota), 402 (billing), 503 (overload): key is structurally
+ *    valid — Google's servers recognised it. Mark as valid so the user can
+ *    still attempt OCR (the actual call may work at lower load).
+ *  - HTTP 401 / 403 with API_KEY_INVALID or PERMISSION_DENIED body: truly
+ *    bad key — mark invalid.
+ *  - Network error: warn but do NOT mark invalid — could be transient.
+ */
 export async function validateGeminiKey(apiKey: string): Promise<{ valid: boolean; message: string }> {
   if (!apiKey || apiKey.trim().length < 10) {
     return { valid: false, message: 'Key is too short — please check and re-enter.' };
@@ -400,10 +413,46 @@ export async function validateGeminiKey(apiKey: string): Promise<{ valid: boolea
         generationConfig: { maxOutputTokens: 5 },
       }),
     });
+
+    // Definite success
     if (res.ok) return { valid: true, message: 'API key validated ✓' };
+
+    // Parse error body for diagnostics
     const j = await res.json().catch(() => ({}));
-    return { valid: false, message: (j as any)?.error?.message || `Error ${res.status}` };
+    const errorCode: string = (j as any)?.error?.status || '';
+    const errorMsg: string  = (j as any)?.error?.message || '';
+
+    // Hard invalid: Google explicitly rejected the key credential
+    const isAuthError =
+      res.status === 400 && errorCode === 'INVALID_ARGUMENT' && errorMsg.toLowerCase().includes('api key') ||
+      res.status === 401 ||
+      (res.status === 403 && (errorCode === 'PERMISSION_DENIED' || errorMsg.toLowerCase().includes('api_key_invalid')));
+
+    if (isAuthError) {
+      return { valid: false, message: errorMsg || `Authentication failed (HTTP ${res.status})` };
+    }
+
+    // Soft errors: quota, billing, rate-limit, overload — key is recognised by Google
+    // Let the user proceed; the actual OCR call might still succeed.
+    const isSoftError = res.status === 429 || res.status === 402 || res.status === 503 || res.status === 500;
+    if (isSoftError) {
+      return {
+        valid: true,
+        message: `Key accepted (HTTP ${res.status} — ${errorMsg || 'quota or billing limit'}). OCR will still be attempted.`,
+      };
+    }
+
+    // Unknown error — treat as valid to avoid blocking the user
+    return {
+      valid: true,
+      message: `Key accepted with warning (HTTP ${res.status}). OCR will be attempted.`,
+    };
   } catch (e) {
-    return { valid: false, message: 'Network error — check your internet connection.' };
+    // Network error (offline, CORS, firewall) — cannot determine validity.
+    // Treat as valid so the user isn’t blocked; the OCR call will fail gracefully if needed.
+    return {
+      valid: true,
+      message: 'Could not reach Google’s servers to verify — key assumed valid. OCR will be attempted.',
+    };
   }
 }
