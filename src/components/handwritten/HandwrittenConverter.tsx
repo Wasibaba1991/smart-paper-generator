@@ -16,6 +16,7 @@ import {
   AlertTriangle,
   FileText,
   ChevronDown,
+  ChevronUp,
   Image as ImageIcon,
   Key,
   Eye,
@@ -24,6 +25,7 @@ import {
   ScanLine,
   Zap,
   Info,
+  Shield,
 } from 'lucide-react';
 import type { ExamPaper, Subject, GradeLevel, Language } from '../../types/exam';
 import { recognizeImage } from '../../utils/ocrService';
@@ -97,9 +99,7 @@ function getAutoLanguage(subject: Subject): Language {
   return 'en';
 }
 
-// ---------------------------------------------------------------------------
-// Sub-component: Gemini API Key Panel
-// ------const GeminiKeyPanel: React.FC<{
+const GeminiKeyPanel: React.FC<{
   apiKey: string;
   keyStatus: 'idle' | 'validating' | 'valid' | 'invalid';
   onKeyChange: (k: string) => void;
@@ -107,143 +107,150 @@ function getAutoLanguage(subject: Subject): Language {
   onForceEnable: () => void;
 }> = ({ apiKey, keyStatus, onKeyChange, onValidate, onForceEnable }) => {
   const [showKey, setShowKey] = useState(false);
+  // Default collapsed — the user never needs to open this to use the app
+  const [isExpanded, setIsExpanded] = useState(false);
 
   // A key that looks like a real Gemini key (AIza... prefix, ≥35 chars)
   const looksValid = apiKey.trim().startsWith('AIza') && apiKey.trim().length >= 35;
 
   return (
     <div className="bg-slate-900/70 backdrop-blur-xl border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-      {/* Panel Header */}
-      <div className="bg-gradient-to-r from-slate-800/80 to-slate-900/80 px-5 py-3.5 border-b border-slate-800 flex items-center justify-between">
+      {/* Collapsible Header */}
+      <button
+        type="button"
+        onClick={() => setIsExpanded((v) => !v)}
+        className="w-full bg-gradient-to-r from-slate-800/80 to-slate-900/80 px-5 py-3.5 border-b border-slate-800 flex items-center justify-between hover:from-slate-700/80 hover:to-slate-800/80 transition-all text-left"
+      >
         <div className="flex items-center gap-2">
           <Zap className="w-4 h-4 text-amber-400" />
-          <span className="font-bold text-sm text-white">AI-Powered OCR</span>
-          <span className="text-[10px] text-slate-500 ml-1">· Google Gemini Vision — Best for handwriting</span>
+          <span className="font-bold text-sm text-white">Gemini AI Enhancement</span>
+          <span className="text-[10px] text-slate-500 ml-1">· Optional — for even better handwriting accuracy</span>
         </div>
-        {keyStatus === 'valid' && (
-          <span className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-400 bg-emerald-900/30 border border-emerald-800 px-2.5 py-1 rounded-full">
-            <CheckCircle2 className="w-3 h-3" /> Gemini Active
-          </span>
-        )}
-        {keyStatus === 'idle' && looksValid && (
-          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-400 bg-amber-900/20 border border-amber-800/50 px-2.5 py-1 rounded-full">
-            <Zap className="w-3 h-3" /> Key ready
-          </span>
-        )}
-        {keyStatus === 'idle' && !looksValid && (
-          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 bg-slate-800/60 border border-slate-700 px-2.5 py-1 rounded-full">
-            <Cpu className="w-3 h-3" /> Tesseract fallback
-          </span>
-        )}
-        {keyStatus === 'invalid' && (
-          <span className="flex items-center gap-1.5 text-[11px] font-semibold text-orange-400 bg-orange-900/20 border border-orange-800/40 px-2.5 py-1 rounded-full">
-            <AlertCircle className="w-3 h-3" /> Verify failed
-          </span>
-        )}
-      </div>
+        <div className="flex items-center gap-2">
+          {keyStatus === 'valid' && (
+            <span className="flex items-center gap-1.5 text-[11px] font-bold text-emerald-400 bg-emerald-900/30 border border-emerald-800 px-2.5 py-1 rounded-full">
+              <CheckCircle2 className="w-3 h-3" /> Gemini Active
+            </span>
+          )}
+          {keyStatus === 'idle' && looksValid && (
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-amber-400 bg-amber-900/20 border border-amber-800/50 px-2.5 py-1 rounded-full">
+              <Zap className="w-3 h-3" /> Key ready
+            </span>
+          )}
+          {keyStatus === 'idle' && !looksValid && !isExpanded && (
+            <span className="text-[10px] text-slate-500 bg-slate-800/60 border border-slate-700 px-2.5 py-1 rounded-full">
+              Click to add key
+            </span>
+          )}
+          {keyStatus === 'invalid' && (
+            <span className="flex items-center gap-1.5 text-[11px] font-semibold text-orange-400 bg-orange-900/20 border border-orange-800/40 px-2.5 py-1 rounded-full">
+              <AlertCircle className="w-3 h-3" /> Verify failed
+            </span>
+          )}
+          {isExpanded
+            ? <ChevronUp className="w-4 h-4 text-slate-500 ml-1" />
+            : <ChevronDown className="w-4 h-4 text-slate-500 ml-1" />}
+        </div>
+      </button>
 
-      <div className="p-5">
-        <div className="flex flex-col sm:flex-row gap-3">
-          {/* Key input */}
-          <div className="relative flex-1">
-            <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
-              <Key className="w-4 h-4" />
-            </div>
-            <input
-              type={showKey ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(e) => onKeyChange(e.target.value)}
-              placeholder="Paste your Google AI (Gemini) API key — AIzaSy..."
-              className={`w-full bg-slate-800/80 border hover:border-slate-500 focus:ring-2 text-slate-200 text-sm rounded-xl pl-10 pr-10 py-2.5 outline-none transition-all placeholder:text-slate-600 font-mono ${
-                keyStatus === 'valid'
-                  ? 'border-emerald-600 focus:border-emerald-500 focus:ring-emerald-500/20'
-                  : keyStatus === 'invalid'
-                  ? 'border-orange-700 focus:border-amber-500 focus:ring-amber-500/20'
-                  : 'border-slate-700 focus:border-amber-500 focus:ring-amber-500/20'
-              }`}
-            />
-            <button
-              type="button"
-              onClick={() => setShowKey(!showKey)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
-            >
-              {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-
-          {/* Action buttons */}
-          <div className="flex gap-2">
-            <button
-              onClick={onValidate}
-              disabled={!apiKey.trim() || keyStatus === 'validating'}
-              className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-all active:scale-95 whitespace-nowrap"
-            >
-              {keyStatus === 'validating' ? (
-                <>
-                  <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Verifying…
-                </>
-              ) : (
-                <>
-                  <Zap className="w-4 h-4" />
-                  Verify &amp; Enable
-                </>
-              )}
-            </button>
-
-            {/* Try-Anyway button shown when key was marked invalid */}
-            {keyStatus === 'invalid' && apiKey.trim().length >= 10 && (
+      {isExpanded && (
+        <div className="p-5">
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Key input */}
+            <div className="relative flex-1">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">
+                <Key className="w-4 h-4" />
+              </div>
+              <input
+                type={showKey ? 'text' : 'password'}
+                value={apiKey}
+                onChange={(e) => onKeyChange(e.target.value)}
+                placeholder="Paste your Google AI (Gemini) API key — AIzaSy..."
+                className={`w-full bg-slate-800/80 border hover:border-slate-500 focus:ring-2 text-slate-200 text-sm rounded-xl pl-10 pr-10 py-2.5 outline-none transition-all placeholder:text-slate-600 font-mono ${
+                  keyStatus === 'valid'
+                    ? 'border-emerald-600 focus:border-emerald-500 focus:ring-emerald-500/20'
+                    : keyStatus === 'invalid'
+                    ? 'border-orange-700 focus:border-amber-500 focus:ring-amber-500/20'
+                    : 'border-slate-700 focus:border-amber-500 focus:ring-amber-500/20'
+                }`}
+              />
               <button
-                onClick={onForceEnable}
-                className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-semibold rounded-xl transition-all active:scale-95 whitespace-nowrap"
-                title="Ignore validation result and try OCR anyway"
+                type="button"
+                onClick={() => setShowKey(!showKey)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors"
               >
-                Try Anyway
+                {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
-            )}
-          </div>
-        </div>
+            </div>
 
-        {/* Status messages */}
-        {keyStatus === 'valid' && (
-          <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5" />
-            Gemini Vision enabled — uploads will use AI for superior handwriting extraction.
-          </p>
-        )}
-        {keyStatus === 'idle' && looksValid && (
-          <p className="mt-2 text-xs text-amber-400/80 flex items-center gap-1.5">
-            <Zap className="w-3.5 h-3.5" />
-            Key detected and ready. Click “Verify &amp; Enable” to confirm, or just click “Extract” — Gemini will be used automatically.
-          </p>
-        )}
-        {keyStatus === 'invalid' && (
-          <p className="mt-2 text-xs text-orange-400 flex items-center gap-1.5">
-            <AlertCircle className="w-3.5 h-3.5" />
-            Verification returned an error. The key may still work — click “Try Anyway” to proceed with OCR, or get a new key at{' '}
-            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="underline hover:text-orange-300">aistudio.google.com</a>.
-          </p>
-        )}
-        {keyStatus === 'idle' && !apiKey && (
-          <p className="mt-2 text-xs text-slate-500 flex items-center gap-1.5">
-            <Info className="w-3.5 h-3.5" />
-            No key? Get a free one at{' '}
-            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline hover:text-amber-300">
-              aistudio.google.com
-            </a>
-            . Without a key, Tesseract OCR runs locally.
-          </p>
-        )}
-      </div>
-    </div>
-  );
-};seract OCR runs locally.
-          </p>
-        )}
-      </div>
+            {/* Action buttons */}
+            <div className="flex gap-2">
+              <button
+                onClick={onValidate}
+                disabled={!apiKey.trim() || keyStatus === 'validating'}
+                className="flex items-center gap-2 px-4 py-2.5 bg-amber-600 hover:bg-amber-500 disabled:bg-slate-700 disabled:text-slate-500 disabled:cursor-not-allowed text-white text-sm font-bold rounded-xl transition-all active:scale-95 whitespace-nowrap"
+              >
+                {keyStatus === 'validating' ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    Verifying…
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" />
+                    Verify &amp; Enable
+                  </>
+                )}
+              </button>
+
+              {/* Try-Anyway button shown when key was marked invalid */}
+              {keyStatus === 'invalid' && apiKey.trim().length >= 10 && (
+                <button
+                  onClick={onForceEnable}
+                  className="flex items-center gap-1.5 px-3 py-2.5 bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-semibold rounded-xl transition-all active:scale-95 whitespace-nowrap"
+                  title="Ignore validation result and try OCR anyway"
+                >
+                  Try Anyway
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Status messages */}
+          {keyStatus === 'valid' && (
+            <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5" />
+              Gemini Vision enabled — uploads will use AI for superior handwriting extraction.
+            </p>
+          )}
+          {keyStatus === 'idle' && looksValid && (
+            <p className="mt-2 text-xs text-amber-400/80 flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5" />
+              Key detected and ready. Click &ldquo;Verify &amp; Enable&rdquo; to confirm, or just click &ldquo;Extract&rdquo; — Gemini will be used automatically.
+            </p>
+          )}
+          {keyStatus === 'invalid' && (
+            <p className="mt-2 text-xs text-orange-400 flex items-center gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5" />
+              Verification returned an error. The key may still work — click &ldquo;Try Anyway&rdquo; to proceed with OCR, or get a new key at{' '}
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="underline hover:text-orange-300">aistudio.google.com</a>.
+            </p>
+          )}
+          {keyStatus === 'idle' && !apiKey && (
+            <p className="mt-2 text-xs text-slate-500 flex items-center gap-1.5">
+              <Info className="w-3.5 h-3.5" />
+              Optional: Paste a free Gemini key from{' '}
+              <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" className="text-amber-400 underline hover:text-amber-300">
+                aistudio.google.com
+              </a>
+              {' '}for even higher handwriting accuracy. The app works perfectly without one.
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 };
@@ -770,10 +777,11 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
     if (!anySuccess && allTexts.length === 0) {
       setGlobalError(
         'Could not extract readable text from any uploaded image.\n\n' +
-        'Tips:\n• Ensure images are sharp and well-lit\n' +
-        '• Avoid shadows or glare on the paper\n' +
-        '• Handwriting should be clear and distinct\n' +
-        '• Enable Gemini AI (above) for best handwriting recognition'
+        'Tips:\n• Ensure images are sharp, well-lit, and in focus\n' +
+        '• Avoid shadows or glare on the paper surface\n' +
+        '• Handwriting should be clear, spaced, and distinct\n' +
+        '• Try a higher-resolution photo in good natural lighting\n' +
+        '• For Urdu/Arabic text, ensure letters are clearly formed'
       );
       setIsRunning(false);
       return;
@@ -904,10 +912,11 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
                   Upload → Extract → Export
                 </h2>
                 <p className="text-sm text-slate-300 mt-2 leading-relaxed">
-                  Upload 1–4 snapshots of your handwritten exam paper (front &amp; back pages). Gemini AI or
-                  Tesseract OCR extracts the exact text and structures it under the official Academy
+                  Upload 1–4 snapshots of your handwritten exam paper (front &amp; back pages).
+                  Smart OCR extracts the text and structures it under the official Academy
                   letterhead — ready for <strong className="text-amber-300">Word</strong> or{' '}
                   <strong className="text-amber-300">PDF</strong> in one click.
+                  <span className="block mt-1 text-emerald-400/90 text-xs font-semibold">✓ No API key required — works instantly out of the box.</span>
                 </p>
               </div>
 
@@ -929,13 +938,35 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
           </div>
 
           {/* ─────────────────────────────────────────────────────────────────
-              GEMINI API KEY PANEL
+              READY BANNER — shown when no Gemini key is active
+             ───────────────────────────────────────────────────────────────── */}
+          {keyStatus !== 'valid' && (
+            <div className="flex items-center gap-3 px-5 py-4 bg-emerald-950/50 border border-emerald-800/60 rounded-2xl shadow-lg">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center flex-shrink-0">
+                <Shield className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-black text-emerald-300">Smart OCR is ready — no API key required</p>
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  Local Tesseract OCR will extract text from your paper instantly. For even better handwriting accuracy, optionally expand "Gemini AI Enhancement" below.
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/20 border border-emerald-500/30 rounded-xl flex-shrink-0">
+                <Cpu className="w-3.5 h-3.5 text-emerald-400" />
+                <span className="text-[11px] font-black text-emerald-400 uppercase tracking-wide hidden sm:inline">Local OCR Active</span>
+              </div>
+            </div>
+          )}
+
+          {/* ─────────────────────────────────────────────────────────────────
+              GEMINI AI ENHANCEMENT PANEL (optional, collapsed by default)
              ───────────────────────────────────────────────────────────────── */}
           <GeminiKeyPanel
             apiKey={geminiKey}
             keyStatus={keyStatus}
             onKeyChange={handleKeyChange}
             onValidate={handleValidateKey}
+            onForceEnable={() => { setKeyStatus('valid'); sessionStorage.setItem(SESSION_KEY, geminiKey.trim()); }}
           />
 
           {/* ─────────────────────────────────────────────────────────────────
@@ -1048,7 +1079,7 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
                   ✔ Auto-extracted by Gemini AI from image
                 </span>
               ) : (
-                <span className="text-[10px] text-slate-500 ml-1">· Enter manually (no Gemini key)</span>
+                <span className="text-[10px] text-slate-500 ml-1">· Optional — fill in to override what OCR detects</span>
               )}
             </div>
             <div className="p-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -1110,12 +1141,12 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
                   className="bg-slate-800/80 border border-slate-700 hover:border-slate-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 text-slate-200 text-sm rounded-xl px-3 py-2.5 outline-none transition-all placeholder:text-slate-600 max-w-sm"
                 />
               </div>
-              {keyStatus === 'valid' && (
-                <p className="text-[11px] text-slate-600 mt-2 flex items-center gap-1.5">
-                  <Sparkles className="w-3 h-3 text-amber-500" />
-                  Fields are populated automatically after AI extracts them from your image. You can correct them if needed.
-                </p>
-              )}
+              <p className="text-[11px] text-slate-600 mt-2 flex items-center gap-1.5">
+                <Info className="w-3 h-3 text-slate-600" />
+                {keyStatus === 'valid'
+                  ? 'Fields populated automatically by AI — you can correct them if needed.'
+                  : 'All fields are optional — OCR will try to detect them. Fill in to override.'}
+              </p>
             </div>
           </div>
 
@@ -1191,6 +1222,16 @@ export const HandwrittenConverter: React.FC<HandwrittenConverterProps> = ({
             {images.length === 0 && !isRunning && (
               <p className="text-xs text-slate-600">Upload at least one image to begin</p>
             )}
+
+            {/* OCR engine indicator */}
+            {!isRunning && images.length > 0 && (
+              <p className="text-[11px] text-slate-600 flex items-center gap-1.5">
+                {keyStatus === 'valid'
+                  ? <><Zap className="w-3 h-3 text-amber-500" /> OCR engine: <span className="text-amber-400 font-bold">Gemini AI Vision</span></>
+                  : <><Cpu className="w-3 h-3 text-emerald-500" /> OCR engine: <span className="text-emerald-400 font-bold">Local Tesseract (no key needed)</span></>}
+              </p>
+            )}
+
           </div>
 
           {/* ─────────────────────────────────────────────────────────────────
